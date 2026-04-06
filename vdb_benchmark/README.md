@@ -25,16 +25,18 @@ pip3 install -e ./
 ## Deploying a Standalone Milvus Instance
 
 Stand-alone instances are available via Docker containers in the stacks directory.
-> stacks
-> └── milvus
->     ├── cluster
->     └── standalone
->         ├── minio
->         │   ├── .env.example
->         │   └── docker-compose.yml
->         └── s3
->             ├── .env.example
->             └── docker-compose-s3.yml
+```
+ stacks
+ └── milvus
+     ├── cluster
+     └── standalone
+         ├── minio
+         │   ├── .env.example
+         │   └── docker-compose.yml
+         └── s3
+             ├── .env.example
+             └── docker-compose-s3.yml
+```
 
 For each specific instance, copy the `.env.example` file to `.env` and update the values as needed.
 ```bash

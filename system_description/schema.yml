@@ -1,33 +1,117 @@
 #
-# The yaml structure is composed of a system description, power info,
-# and a list of nodes of various types.  All are required subsections.
+# The root of the yaml tree.
 #
-system:                     include('system_description',required=True)
-power:                      include('power_requirements',required=True)
-nodes:
-    client_nodes:           include('node_description',required=True)
-    storage_data_nodes:     include('node_description',required=True)
-    storage_metadata_nodes: include('node_description',required=False)
+system_under_test:
+    system:                     include('system_description')
+    hardware:                   include('hardware_description')
+    power:                      include('power_requirements')
 
 ---
 #
 #
 #
 system_description:
-    name:                   str(min=1)
-    description:            str(min=1)
-    storage_location:       enum('remote','local','hyper-converged')
-    client_software:        enum('in-box','proprietary')
-    storage_interface:      enum('block','file','object')
-    required_rack_units:    int(min=1)
-    shared_capabilities:
-        multi_host_support:         enum('True','False')  # False is used for local storage
-        simultaneous_write_support: enum('True','False')  # Are simultaneous writes by multiple hosts supported?
-        simultaneous_read__support: enum('True','False')  # Are simultaneous reads by multiple hosts supported?
-    max_sequential_read:    int(min=1,required=True)      # In GiB/s
-    max_sequential_write:   int(min=1,required=True)      # In GiB/s
-    max_random_read:        int(min=1,required=True)      # In GiB/s
-    max_random_write:       int(min=1,required=True)      # In GiB/s
+    submission_name:            str(min=1)
+    friendly_description:       str(min=1)
+    software:                   include('software_description')
+    capabilities:               include('system_capabilities')
+
+---
+#
+#
+#
+software_description:
+    location:                   enum('remote','local','remote_and_local')
+    interface:                  enum('file','object','block')
+    client_footprint:           enum('open_source','closed_source','none')
+    client_installation:        enum('in_box','installable','n/a')
+
+---
+#
+#
+#
+system_capabilities:
+    multi_host:                 bool()      # False is used for local storage
+    simultaneous_write:         bool()      # Are simultaneous writes by multiple hosts supported?
+    simultaneous_read:          bool()      # Are simultaneous reads by multiple hosts supported?
+    remap_time_in_seconds:      int(min=0)  # Time required to go from writing to reading
+
+---
+#
+#
+#
+hardware_description:
+    storage:                    include('node_description')
+    switches:                   include('switch_description',required=False,none=False)
+    total_rack_units:           int(min=0)
+    clients:                    include('node_description')
+
+---
+# 
+# 
+# 
+node_description:
+    friendly_description:       str(min=1)
+    quantity:                   int(min=1)
+    chassis:                    include('chassis_description')
+    networking:                 list(include('network_instance'),min=1)
+    operating_system:           include('operating_system_description')
+    tuning:
+        # All non-default tunings for OS need to be listed
+        mpi_configuration:
+            environment_variables: <list>
+            version: Open MPI 4.1.4
+        sysctl_parameters:
+            <list all non-default parameters>
+
+---
+#
+#
+#
+chassis_description:
+    model_name:                 str(min=1)
+    rack_units:                 int(min=1)
+    power_supplies:             int(min=1)
+    psu_configuration:          enum('active/passive','active/active')
+    psu_rating:                 int(min=1)
+    memory_capacity:            int(min=1)  # in GiB, eg: 256
+    cpu_model:                  str(min=1)
+    cpu_qty:                    int(min=1)
+    cpu_cores:                  int(min=1)
+
+---
+#
+#
+#
+network_instance:
+    type:                       enum('ethernet','infiniband','other')
+    speed:                      int(min=1)  # in Gigabits/s
+    port_count:                 int(min=1)
+    traffic:                    list(enum('management','data','metadata','backend'),min=1)
+
+---
+#
+#
+#
+operating_system_description:
+    name:                       str(min=1)
+    version:                    str(min=1)
+    release_date:               str(min=1)
+    kernel_version:             str(min=1)
+
+---
+#
+#
+#
+switch_description:
+    vendor_name:                str(min=1)
+    model_name:                 str(min=1)
+    ports:                      list(include('network_instance'),min=1)
+    rack_units:                 int(min=1)
+    power_supplies:             int(min=1)
+    psu_configuration:          enum('active/passive','active/active')
+    psu_rating:                 int(min=1)
+    port_count:                 int(min=1)
 
 ---
 # Each on-prem MLPerf submission include the nameplate / design power of the submitted System Under Test (SUT).
@@ -84,8 +168,8 @@ system_description:
 #     - Name: PSU 2
 #       PowerCapacityWatts: 12000
 Power:
-    Provisioned:            include('power_provisioned',required=True)
-    Consumed:               include('power_consumed',required=False)
+    Provisioned:            include('power_provisioned')
+    Consumed:               include('power_consumed',required=False,none=False)
 ---
 power_rack:
 ---
@@ -103,47 +187,3 @@ power_supply:
 ---
 power_consumed:
     Watts:                  int(min=1)
-
----
-# 
-# 
-# 
-node_description:
-    Description:            str(min=1)
-    Quantity:               int(min=1)
-    Hardware:               include('hardware_description')
-    networking:             list(include('network_instance'),min=1)
-    operating_system:       include('operating_system_description')
-    tuning:
-        # All non-default tunings for OS need to be listed
-        mpi_configuration:
-            environment_variables: <list>
-            version: Open MPI 4.1.4
-        sysctl_parameters:
-            <list all non-default parameters>
-
----
-hardware_description:
-    model:                  str(min=1)
-    rack_units:             int(min=1)
-    power_supplies:         int(min=1)
-    psu_configuration:      enum('active/passive','active/active')
-    psu_rating:             int(min=1)
-    memory_capacity:        int(min=1)  # in GB, eg: 256
-    memory_configuration:   8x32GB
-    cpu_qty:                int(min=1)
-    cpu_model:              str(min=1)
-    cpu_cores:              int(min=1)
----
-network_instance:
-    type:                   enum('management','data','backend')
-    model:                  str(min=1)
-    speed:                  int(min=1)  # in Gb/s
-    qty:                    int(min=1)
----
-operating_system_description:
-    name:                   str(min=1)
-    version:                str(min=1)
-    release_date:           str(min=1)
-    kernel_version:         str(min=1)
-    cpu_architecture:       enum('x86','arm')

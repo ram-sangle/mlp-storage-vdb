@@ -4,7 +4,6 @@
 system_under_test:
     system:                     include('system_description')
     hardware:                   include('hardware_description')
-    power:                      include('power_requirements')
 
 ---
 #
@@ -74,13 +73,11 @@ key_value:
 chassis_description:
     model_name:                 str(min=1)
     rack_units:                 int(min=1)
-    power_supplies:             int(min=1)
-    psu_configuration:          enum('active/passive','active/active')
-    psu_rating:                 int(min=1)
-    memory_capacity:            int(min=1)  # in GiB, eg: 256
     cpu_model:                  str(min=1)
     cpu_qty:                    int(min=1)
     cpu_cores:                  int(min=1)
+    memory_capacity:            int(min=1)  # in GiB, eg: 256
+    power:                      include('power_device')
 
 ---
 #
@@ -99,8 +96,6 @@ network_instance:
 operating_system_description:
     name:                       str(min=1)
     version:                    str(min=1)
-    release_date:               str(min=1)
-    kernel_version:             str(min=1)
 
 ---
 #
@@ -111,12 +106,27 @@ switch_description:
     model_name:                 str(min=1)
     ports:                      list(include('network_instance'),min=1)
     rack_units:                 int(min=1)
-    power_supplies:             int(min=1)
-    psu_configuration:          enum('active/passive','active/active')
-    psu_rating:                 int(min=1)
-    port_count:                 int(min=1)
+    power:                      include('power_device')
 
 ---
+#
+#
+#
+power_device:
+    min_psus_active:            int(min=1)
+    psus_configured:            list(include('power_supply'),min=1)
+
+---
+#
+#
+#
+power_supply:
+    Name:                       str(min=1)
+    PowerCapacityWatts:         int(min=1)
+    Efficiency:                 enum('Gold','Platinum','Titanium','Ruby')
+
+
+
 # Each on-prem MLPerf submission include the nameplate / design power of the submitted System Under Test (SUT).
 # This information will complement existing measured-power methodologies and provide a uniform baseline reference across systems and vendors.
 # The intent is not to replace measured power but to give additional visibility into the designed power capacity of submitted systems.
@@ -170,23 +180,3 @@ switch_description:
 #       PowerCapacityWatts: 12000
 #     - Name: PSU 2
 #       PowerCapacityWatts: 12000
-Power:
-    provisioned:            include('power_provisioned')
-    consumed:               include('power_consumed',required=False,none=False)
----
-power_rack:
----
-power_provisioned:
-    storage_data_node:      list(include('power_device'),min=1)
----
-power_device:
-    description:            str(min=1)
-    min psus needed:        int(min=1)
-    psus:                   list(include('power_supply'),min=1)
----
-power_supply:
-    Name:                   str(min=1)
-    PowerCapacityWatts:     int(min=1)
----
-power_consumed:
-    Watts:                  int(min=1)

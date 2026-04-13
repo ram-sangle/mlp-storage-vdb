@@ -81,6 +81,7 @@ switch_description:
     vendor_name:                str( min=1 )
     model_name:                 str( min=1 )
     ports:                      list( include( 'network_instance' ), min=1 )
+    configuration:              list( include( 'key_value' ), required=False ) # Just non-default values
     rack_units:                 int( min=1 )
     power:                      include( 'power_device' )
     unit_count:                 int( min=1 )  # Number of switches that look like this

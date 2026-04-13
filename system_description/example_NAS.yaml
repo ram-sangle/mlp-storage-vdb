@@ -62,6 +62,9 @@ system_under_test:
                traffic:
                    - data
                unit_count: 128
+          configuration:
+              - name: LACP
+                value: layer 3
           rack_units: 2
           power:
              min_psus_active: 1

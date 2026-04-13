@@ -1,7 +1,7 @@
 system_under_test:
     system:
         submission_name: PFS_example
-        friendly_description: A generic example based upon a Paarallel filesystem
+        friendly_description: A generic example based upon a Parallel filesystem
         architecture:
             storage_location: remote_and_local
             benchmark_API: file
@@ -119,4 +119,4 @@ system_under_test:
                unit_count: 1
           operating_system:
               name: RHEL
-              version: 10.1"
+              version: "10.1"

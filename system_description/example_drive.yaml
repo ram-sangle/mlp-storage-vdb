@@ -57,4 +57,4 @@ system_under_test:
                       Efficiency: Platinum
           operating_system:
               name: RHEL
-              version: 10.1"
+              version: "10.1"

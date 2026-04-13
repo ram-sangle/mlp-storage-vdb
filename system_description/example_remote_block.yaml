@@ -90,4 +90,4 @@ system_under_test:
                unit_count: 1
           operating_system:
               name: RHEL
-              version: 10.1"
+              version: "10.1"

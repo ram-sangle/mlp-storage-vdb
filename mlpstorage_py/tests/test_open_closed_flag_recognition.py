@@ -40,9 +40,16 @@ class TestOpenClosedCLIFlags:
 
     def _build_parser(self):
         import argparse
-        from mlpstorage_py.cli.common_args import add_universal_arguments
+        from mlpstorage_py.cli.common_args import (
+            add_universal_arguments,
+            add_storage_type_arguments,
+        )
         parser = argparse.ArgumentParser()
         add_universal_arguments(parser)
+        # --file/--object now live exclusively in add_storage_type_arguments
+        # (see issue #376). Real benchmark subparsers call both, so the
+        # test mirrors that to keep ``--file`` available in parse_args calls.
+        add_storage_type_arguments(parser)
         return parser
 
     def test_neither_flag_sets_both_false(self):

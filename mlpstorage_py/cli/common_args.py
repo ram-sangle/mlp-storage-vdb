@@ -192,21 +192,12 @@ def add_universal_arguments(parser):
         help="Path to YAML file with argument overrides"
     )
 
-    # Create a mutually exclusive group for file/object options
-    access_proto = standard_args.add_mutually_exclusive_group(required=True)
-    access_proto.add_argument(
-        "--file",
-        action="store_true",
-        help="Use POSIX files as the data access method"
-    )
-    access_proto.add_argument(
-        "--object",
-        nargs="?",
-        type=str,
-        const="s3",
-        choices=["s3"],
-        help="Use the given Object API as the data access method, defaults to S3"
-    )
+    # NOTE: --file / --object are intentionally NOT added here. They are
+    # declared exclusively in ``add_storage_type_arguments`` and attached
+    # only to benchmark subparsers (training, checkpointing, vectordb,
+    # kvcache). Adding them in both places would raise
+    # ``argparse.ArgumentError: argument --file: conflicting option string``
+    # the moment any subparser builder calls both functions — see issue #376.
 
     # Create a mutually exclusive group for closed/open options.
     # Both flags set their own independent boolean so downstream code can

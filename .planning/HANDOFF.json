@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-05-26T19:52:28Z",
+  "phase": null,
+  "phase_name": "fork-after-mpi-init-fix",
+  "phase_dir": null,
+  "plan": null,
+  "task": null,
+  "total_tasks": null,
+  "status": "paused",
+  "context": "ad-hoc code review and surgical fix",
+  "branch": "FileSystemGuy-une3d-hang",
+  "completed_tasks": [
+    {
+      "id": 1,
+      "name": "Review unet3d training support in current PR",
+      "status": "done",
+      "notes": "Reviewed all three files changed in dec4d42: utils.py (read1 fix), cluster_collector.py (gather-always fix), test_cluster_collector.py (6 new tests)"
+    },
+    {
+      "id": 2,
+      "name": "Identify remaining hang cause: fork()-after-MPI-init",
+      "status": "done",
+      "notes": "Root cause: mpirun->DLIO rank (MPI_Init) -> DataLoader fork() -> orphan workers hold pipe write-end -> TextIOWrapper.read() blocks indefinitely after mpirun exits"
+    },
+    {
+      "id": 3,
+      "name": "Apply surgical fix to CommandExecutor.execute() drain section",
+      "status": "done",
+      "commit": "uncommitted",
+      "notes": "Replaced two blocking .read() calls with select()+read1() loop using 0.5s timeout. 176 unit tests pass."
+    }
+  ],
+  "remaining_tasks": [
+    {
+      "id": 4,
+      "name": "Commit the fix",
+      "status": "not_started",
+      "notes": "mlpstorage_py/utils.py has the change staged but not committed"
+    },
+    {
+      "id": 5,
+      "name": "Optionally: address double cluster collection in DLIOBenchmark.__init__ vs base.Benchmark.run()",
+      "status": "not_started",
+      "notes": "Both call _collect_cluster_information() redundantly. Not a hang, just wasted time. Out of scope for this PR per user's late-release constraint."
+    }
+  ],
+  "blockers": [],
+  "human_actions_pending": [
+    {
+      "action": "Review and commit the utils.py fix",
+      "context": "One uncommitted file: mlpstorage_py/utils.py with the select-based drain replacing blocking .read() calls",
+      "blocking": false
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Use select()+read1() with 0.5s timeout instead of blocking .read()",
+      "rationale": "When pipe write-end is closed (normal case) select() returns immediately on EOF — zero latency. When orphaned grandchildren hold it open, times out after 0.5s and un-sticks the orchestrator.",
+      "phase": "n/a"
+    },
+    {
+      "decision": "Do NOT add process-group management (start_new_session=True + os.killpg)",
+      "rationale": "More invasive, changes mpirun's session/signal handling. The drain timeout achieves the same unblock with minimal surface area.",
+      "phase": "n/a"
+    },
+    {
+      "decision": "Keep double cluster collection (DLIOBenchmark.__init__ + base.Benchmark.run()) out of scope",
+      "rationale": "User is late in release cycle; only fix minimum required. Double collection is a redundancy/perf issue, not a hang.",
+      "phase": "n/a"
+    }
+  ],
+  "uncommitted_files": ["mlpstorage_py/utils.py"],
+  "next_action": "git add mlpstorage_py/utils.py && git commit with message describing the fork()-after-MPI-init fix",
+  "context_notes": "This is on branch FileSystemGuy-une3d-hang. The PR already has two fixes in dec4d42 (read1 for readline hang, gather-always for MPI deadlock). This session added a third fix for the pipe drain hang caused by orphaned DataLoader workers. All 176 runnable unit tests pass."
+}

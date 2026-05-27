@@ -208,23 +208,35 @@ class ElasticsearchBackend(VectorDBBackend):
         params = search_params or {}
         num_candidates = params.get("num_candidates", 100)
 
-        results: List[List[int]] = []
-        for qvec in query_vectors:
+        if len(query_vectors) == 1:
             resp = self._client.search(
                 index=name,
                 knn={
                     "field": "vector",
-                    "query_vector": qvec.tolist(),
+                    "query_vector": query_vectors[0].tolist(),
                     "k": top_k,
                     "num_candidates": num_candidates,
                 },
                 size=top_k,
                 _source=False,
             )
-            ids = [int(hit["_id"]) for hit in resp["hits"]["hits"]]
-            results.append(ids)
+            return [[int(hit["_id"]) for hit in resp["hits"]["hits"]]]
 
-        return results
+        msearch_body = []
+        for qvec in query_vectors:
+            msearch_body.append({"index": name})
+            msearch_body.append({
+                "knn": {
+                    "field": "vector",
+                    "query_vector": qvec.tolist(),
+                    "k": top_k,
+                    "num_candidates": num_candidates,
+                },
+                "size": top_k,
+                "_source": False,
+            })
+        response = self._client.msearch(body=msearch_body)
+        return [[int(h["_id"]) for h in r["hits"]["hits"]] for r in response["responses"]]
 
     # ------------------------------------------------------------------
     # Status / info

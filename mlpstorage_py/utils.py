@@ -387,9 +387,12 @@ class CommandExecutor:
                 )
                 
                 for stream in readable:
-                    line = stream.readline()
-                    if not line:  # EOF
+                    # read1() returns whatever bytes are in the pipe buffer without
+                    # blocking for '\n', preventing a hang on \r-terminated output.
+                    raw = stream.buffer.read1(65536)
+                    if not raw:  # EOF
                         continue
+                    line = raw.decode('utf-8', errors='replace')
                         
                     if stream.fileno() == stdout_fd:
                         stdout_buffer.write(line)
@@ -402,20 +405,29 @@ class CommandExecutor:
                             sys.stderr.write(line)
                             sys.stderr.flush()
             
-            # Read any remaining output
-            stdout_remainder = self.process.stdout.read()
-            if stdout_remainder:
-                stdout_buffer.write(stdout_remainder)
-                if print_stdout:
-                    sys.stdout.write(stdout_remainder)
-                    sys.stdout.flush()
-                    
-            stderr_remainder = self.process.stderr.read()
-            if stderr_remainder:
-                stderr_buffer.write(stderr_remainder)
-                if print_stderr:
-                    sys.stderr.write(stderr_remainder)
-                    sys.stderr.flush()
+            # Drain any remaining output.  TextIOWrapper.read() blocks until
+            # EOF, which never arrives if orphaned grandchild processes
+            # (e.g. PyTorch DataLoader workers forked inside a DLIO MPI rank
+            # *after* MPI_Init) still hold the pipe write-end open.
+            # select() + read1() with a short timeout avoids that hang:
+            # when the write-end is fully closed select() returns immediately
+            # (EOF is readable), so the normal path has no added latency.
+            for stream, buf, print_flag, sys_out in [
+                (self.process.stdout, stdout_buffer, print_stdout, sys.stdout),
+                (self.process.stderr, stderr_buffer, print_stderr, sys.stderr),
+            ]:
+                while True:
+                    ready, _, _ = select.select([stream], [], [], 0.5)
+                    if not ready:
+                        break
+                    chunk = stream.buffer.read1(65536)
+                    if not chunk:
+                        break
+                    text = chunk.decode('utf-8', errors='replace')
+                    buf.write(text)
+                    if print_flag:
+                        sys_out.write(text)
+                        sys_out.flush()
             
             # Get the return code
             return_code = self.process.poll()

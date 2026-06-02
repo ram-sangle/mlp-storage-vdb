@@ -205,26 +205,50 @@ class ElasticsearchBackend(VectorDBBackend):
         top_k: int,
         search_params: Optional[Dict[str, Any]] = None,
     ) -> List[List[int]]:
+        """k-NN search over one or more query vectors.
+
+        A single vector uses the regular ``_search`` fast path; multiple
+        vectors are sent as one ``_msearch`` (multi-search) request rather
+        than a serial loop of HTTP round-trips.
+
+        Note (VDB-4): batching here makes per-query HTTP overhead *more
+        comparable* to Milvus's single-RPC batch search, but it does not make
+        cross-backend QPS strictly equivalent -- ``_msearch`` and Milvus's RPC
+        still differ in execution model, so cross-backend QPS should be read as
+        indicative, not as an apples-to-apples measurement.
+        """
         params = search_params or {}
         num_candidates = params.get("num_candidates", 100)
 
-        results: List[List[int]] = []
-        for qvec in query_vectors:
+        if len(query_vectors) == 1:
             resp = self._client.search(
                 index=name,
                 knn={
                     "field": "vector",
-                    "query_vector": qvec.tolist(),
+                    "query_vector": query_vectors[0].tolist(),
                     "k": top_k,
                     "num_candidates": num_candidates,
                 },
                 size=top_k,
                 _source=False,
             )
-            ids = [int(hit["_id"]) for hit in resp["hits"]["hits"]]
-            results.append(ids)
+            return [[int(hit["_id"]) for hit in resp["hits"]["hits"]]]
 
-        return results
+        msearch_body = []
+        for qvec in query_vectors:
+            msearch_body.append({"index": name})
+            msearch_body.append({
+                "knn": {
+                    "field": "vector",
+                    "query_vector": qvec.tolist(),
+                    "k": top_k,
+                    "num_candidates": num_candidates,
+                },
+                "size": top_k,
+                "_source": False,
+            })
+        response = self._client.msearch(body=msearch_body)
+        return [[int(h["_id"]) for h in r["hits"]["hits"]] for r in response["responses"]]
 
     # ------------------------------------------------------------------
     # Status / info

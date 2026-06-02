@@ -506,25 +506,20 @@ class BenchmarkOrchestrator:
         qpath = os.path.join(d, "query_vectors.npy")
         gtpath = os.path.join(d, "ground_truth.npz")
 
-        if not os.path.isfile(qpath) or not os.path.isfile(gtpath):
+        if not os.path.isfile(qpath):
             raise FileNotFoundError(
                 f"Expected artifacts not found in '{d}'.  "
-                f"Looking for query_vectors.npy and ground_truth.npz"
+                f"Looking for query_vectors.npy"
+            )
+        if self.cfg.truth_mode != "flat_index" and not os.path.isfile(gtpath):
+            raise FileNotFoundError(
+                f"Expected artifacts not found in '{d}'.  "
+                f"Looking for ground_truth.npz (required when truth_mode != flat_index)"
             )
 
         self.query_vectors = np.load(qpath)
-        gt = np.load(gtpath)
-        self.truth_table = gt["truth_table"]
 
-        logger.info(
-            "Loaded artifacts from '%s': queries=%s, truth=%s",
-            d, self.query_vectors.shape, self.truth_table.shape,
-        )
-
-        # If truth_mode is flat_index and we don't have precomputed truth,
-        # build it on-the-fly
-        if (self.cfg.truth_mode == "flat_index"
-                and self.truth_table is None):
+        if self.cfg.truth_mode == "flat_index":
             flat_name = f"{self.cfg.collection_name}_flat"
             self.truth_table = build_truth_from_flat(
                 backend=self.backend,
@@ -533,6 +528,14 @@ class BenchmarkOrchestrator:
                 truth_k=self.cfg.truth_k,
                 metric_type=self.cfg.metric_type,
             )
+        else:
+            gt = np.load(gtpath)
+            self.truth_table = gt["truth_table"]
+
+        logger.info(
+            "Loaded artifacts from '%s': queries=%s, truth=%s",
+            d, self.query_vectors.shape, self.truth_table.shape,
+        )
 
     # ------------------------------------------------------------------
     # Helpers

@@ -20,7 +20,7 @@ Rule reference:
 import copy
 import pytest
 
-from schema_validator import validate_dict
+from mlpstorage_py.system_description.schema_validator import validate_dict
 
 
 # ---------------------------------------------------------------------------

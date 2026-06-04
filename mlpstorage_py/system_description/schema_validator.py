@@ -2,7 +2,7 @@
 # Requires: pip install pydantic>=2.0  (add to pyproject.toml dependencies)
 #
 # Programmatic usage:
-#   from system_description.schema_validator import validate_file, validate_dict
+#   from mlpstorage_py.system_description.schema_validator import validate_file, validate_dict
 #   errors = validate_file("path/to/system.yaml")
 #   if errors:
 #       for msg in errors:

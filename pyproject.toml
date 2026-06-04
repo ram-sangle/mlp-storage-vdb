@@ -7,6 +7,7 @@ name = "mlpstorage"
 version = "3.0.3"
 description = "MLPerf Storage Benchmark Suite"
 readme = "README.md"
+license = {text = "Apache-2.0"}
 authors = [
     {name = "MLCommons Storage Working Group"}
 ]
@@ -17,9 +18,12 @@ dependencies = [
     "pyyaml>=6.0",
     "packaging>=21.0",
     "rich>=13.0",
-    "s3dlio>=0.9.86",
     "dlio-benchmark", # Required dependency
     "pydantic>=2.13.4",
+    "minio>=7.2.20",
+    "s3torchconnector>=1.5.0",
+    "python-dotenv>=1.0.0",
+    "s3dlio>=0.9.100",
 ]
 
 [project.optional-dependencies]
@@ -31,13 +35,19 @@ test = [
 full = [
     "dlio-benchmark",
 ]
+vectordb = [
+    "pymilvus>=2.4.0",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "tabulate>=0.9",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/mlcommons/storage"
 "Bug Tracker" = "https://github.com/mlcommons/storage/issues"
 
 [tool.setuptools]
-packages = {find = {}}
+packages = {find = {include = ["mlpstorage_py*", "vdbbench*"]}}
 
 [tool.setuptools.package-data]
 "mlpstorage_py" = ["../configs/dlio/workload/*.yaml"]
@@ -75,8 +85,17 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[tool.uv]
+# s3dlio only ships Linux wheels — restrict resolution to Linux.
+environments = ["sys_platform == 'linux'"]
+
 [tool.uv.sources]
-dlio-benchmark = { git = "https://github.com/mlcommons/DLIO_local_changes.git" }
 torch = [{ index = "pytorch-cpu" }]
 torchvision = [{ index = "pytorch-cpu" }]
 torchaudio = [{ index = "pytorch-cpu" }]
+dlio-benchmark = { git = "https://github.com/russfellows/dlio_benchmark.git", rev = "21c0723de897add728158943d369abd4b333f7dc" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

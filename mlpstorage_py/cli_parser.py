@@ -6,6 +6,7 @@ using modular argument builders from the cli package.
 """
 
 import argparse
+import re
 import sys
 
 from mlpstorage_py import VERSION
@@ -19,6 +20,7 @@ from mlpstorage_py.cli import (
     add_training_arguments,
     add_checkpointing_arguments,
     add_vectordb_arguments,
+    add_kvcache_arguments,
     add_reports_arguments,
     add_history_arguments,
     add_lockfile_arguments,
@@ -56,6 +58,11 @@ def parse_arguments():
         description=PROGRAM_DESCRIPTIONS['vectordb'],
         help="VectorDB benchmark options"
     )
+    kvcache_parsers = sub_programs.add_parser(
+        "kvcache",
+        description=PROGRAM_DESCRIPTIONS['kvcache'],
+        help="KV Cache benchmark options"
+    )
     reports_parsers = sub_programs.add_parser(
         "reports",
         description=PROGRAM_DESCRIPTIONS.get('reports', ''),
@@ -76,6 +83,7 @@ def parse_arguments():
         'training': training_parsers,
         'checkpointing': checkpointing_parsers,
         'vectordb': vectordb_parsers,
+        'kvcache': kvcache_parsers,
         'reports': reports_parsers,
         'history': history_parsers,
         'lockfile': lockfile_parsers,
@@ -85,6 +93,7 @@ def parse_arguments():
     add_training_arguments(training_parsers)
     add_checkpointing_arguments(checkpointing_parsers)
     add_vectordb_arguments(vectordb_parsers)
+    add_kvcache_arguments(kvcache_parsers)
     add_reports_arguments(reports_parsers)
     add_history_arguments(history_parsers)
     add_lockfile_arguments(lockfile_parsers)
@@ -106,13 +115,20 @@ def parse_arguments():
     if hasattr(parsed_args, 'config_file') and parsed_args.config_file:
         parsed_args = apply_yaml_config_overrides(parsed_args)
 
-    # Consolidate the data access protocol into a single field
-    if parsed_args.file:
-        parsed_args.data_access_protocol = "file"
-    else:
-        parsed_args.data_access_protocol = parsed_args.object
-    del parsed_args.file
-    del parsed_args.object
+    # Consolidate the data access protocol into a single field.
+    # The --file / --object flags are only defined on benchmark subcommands
+    # that call add_storage_type_arguments() (training, checkpointing,
+    # vectordb, kvcache). Other subcommands (reports, history, lockfile)
+    # do not define them, so guard the consolidation on attribute presence.
+    if hasattr(parsed_args, "file") or hasattr(parsed_args, "object"):
+        if getattr(parsed_args, "file", False):
+            parsed_args.data_access_protocol = "file"
+        else:
+            parsed_args.data_access_protocol = getattr(parsed_args, "object", None)
+        # Clean up the raw flags so downstream code uses data_access_protocol.
+        for _attr in ("file", "object"):
+            if hasattr(parsed_args, _attr):
+                delattr(parsed_args, _attr)
 
     """
     print(f"Arguments found: {parsed_args}")
@@ -227,22 +243,37 @@ def update_args(args):
             args.runtime = VECTORDB_DEFAULT_RUNTIME  # Default runtime if not provided
 
     # Check for list of lists in params and flatten them
-    if args.params:
+    if hasattr(args, 'params') and args.params:
         flattened_params = [item for sublist in args.params for item in sublist]
         setattr(args, 'params', flattened_params)
 
-    if args.mpi_params:
+    if hasattr(args, 'mpi_params') and args.mpi_params:
         flattened_mpi_params = [item for sublist in args.mpi_params for item in sublist]
         setattr(args,'mpi_params', flattened_mpi_params)
 
-    if hasattr(args, 'hosts'):
-        print(f'Hosts is: {args.hosts}')
-        # hosts can be comma separated string or a list of strings. If it's a string, it is still a list of length 1
-        if len(args.hosts) == 1 and isinstance(args.hosts[0], str):
-            setattr(args, 'hosts', args.hosts[0].split(','))
-        print(f'Hosts is: {args.hosts}')
+    if hasattr(args, 'hosts') and args.hosts is not None:
+        # Accept any of the following equivalent forms and normalize to a clean list:
+        #   --hosts h1 h2 h3              -> ['h1', 'h2', 'h3']
+        #   --hosts h1,h2,h3              -> ['h1', 'h2', 'h3']
+        #   --hosts 'h1 h2 h3'            -> ['h1', 'h2', 'h3']   (quoted, e.g. from YAML)
+        #   --hosts='h1,h2,h3'            -> ['h1', 'h2', 'h3']   (DLIO subprocess form)
+        #   --hosts='h1 h2 h3'            -> ['h1', 'h2', 'h3']   (quoted after '=')
+        # This defends against the argparse + nargs='+' + '=' interaction documented in
+        # https://github.com/mlcommons/storage/issues/322.
+        raw = args.hosts if isinstance(args.hosts, list) else [args.hosts]
+        normalized = []
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            for tok in re.split(r'[,\s]+', item.strip()):
+                if tok:
+                    normalized.append(tok)
+        if not normalized:
+            print("ERROR: --hosts is empty after parsing", file=sys.stderr)
+            sys.exit(EXIT_CODE.INVALID_ARGUMENTS)
+        args.hosts = normalized
 
-    if not hasattr(args, "num_client_hosts") and hasattr(args, "hosts"):
+    if hasattr(args, 'hosts') and getattr(args, 'num_client_hosts', None) is None:
         setattr(args, "num_client_hosts", len(args.hosts))
 
 

@@ -387,9 +387,12 @@ class CommandExecutor:
                 )
                 
                 for stream in readable:
-                    line = stream.readline()
-                    if not line:  # EOF
+                    # read1() returns whatever bytes are in the pipe buffer without
+                    # blocking for '\n', preventing a hang on \r-terminated output.
+                    raw = stream.buffer.read1(65536)
+                    if not raw:  # EOF
                         continue
+                    line = raw.decode('utf-8', errors='replace')
                         
                     if stream.fileno() == stdout_fd:
                         stdout_buffer.write(line)
@@ -402,20 +405,29 @@ class CommandExecutor:
                             sys.stderr.write(line)
                             sys.stderr.flush()
             
-            # Read any remaining output
-            stdout_remainder = self.process.stdout.read()
-            if stdout_remainder:
-                stdout_buffer.write(stdout_remainder)
-                if print_stdout:
-                    sys.stdout.write(stdout_remainder)
-                    sys.stdout.flush()
-                    
-            stderr_remainder = self.process.stderr.read()
-            if stderr_remainder:
-                stderr_buffer.write(stderr_remainder)
-                if print_stderr:
-                    sys.stderr.write(stderr_remainder)
-                    sys.stderr.flush()
+            # Drain any remaining output.  TextIOWrapper.read() blocks until
+            # EOF, which never arrives if orphaned grandchild processes
+            # (e.g. PyTorch DataLoader workers forked inside a DLIO MPI rank
+            # *after* MPI_Init) still hold the pipe write-end open.
+            # select() + read1() with a short timeout avoids that hang:
+            # when the write-end is fully closed select() returns immediately
+            # (EOF is readable), so the normal path has no added latency.
+            for stream, buf, print_flag, sys_out in [
+                (self.process.stdout, stdout_buffer, print_stdout, sys.stdout),
+                (self.process.stderr, stderr_buffer, print_stderr, sys.stderr),
+            ]:
+                while True:
+                    ready, _, _ = select.select([stream], [], [], 0.5)
+                    if not ready:
+                        break
+                    chunk = stream.buffer.read1(65536)
+                    if not chunk:
+                        break
+                    text = chunk.decode('utf-8', errors='replace')
+                    buf.write(text)
+                    if print_flag:
+                        sys_out.write(text)
+                        sys_out.flush()
             
             # Get the return code
             return_code = self.process.poll()
@@ -472,7 +484,9 @@ def generate_mpi_prefix_cmd(
     oversubscribe: bool,
     allow_run_as_root: bool,
     params: Optional[List[str]],
-    logger: logging.Logger
+    logger: logging.Logger,
+    mpi_btl: str = "auto",
+    processes_per_node: Optional[int] = None,
 ) -> str:
     """Generate MPI command prefix for distributed execution.
 
@@ -487,6 +501,14 @@ def generate_mpi_prefix_cmd(
         allow_run_as_root: Allow running MPI as root user.
         params: Additional MPI parameters to append.
         logger: Logger instance for debug output.
+        mpi_btl: Byte Transport Layer for single-host runs. 'auto' lets
+            OpenMPI select automatically (default). 'vader' forces POSIX
+            shared-memory transport. 'tcp' forces TCP loopback (most
+            compatible; recommended for containers/root). Ignored for
+            multi-host runs.
+        processes_per_node: Number of MPI processes per node. When not None,
+            injects ``--npernode N`` into the prefix after the host list and
+            before bind/map directives. Default None (no injection).
 
     Returns:
         MPI command prefix string ready for command execution.
@@ -497,10 +519,11 @@ def generate_mpi_prefix_cmd(
 
     Example:
         >>> prefix = generate_mpi_prefix_cmd(
-        ...     'mpirun', ['host1', 'host2'], 8, False, False, None, logger
+        ...     'mpirun', ['host1', 'host2'], 8, False, False, None, logger,
+        ...     processes_per_node=4
         ... )
         >>> prefix
-        'mpirun -n 8 -host host1:4,host2:4 --bind-to none --map-by node'
+        'mpirun -n 8 -host host1:4,host2:4 --npernode 4 --bind-to none --map-by node'
     """
     # Check if we got slot definitions with the hosts
     slots_configured = any(":" in host for host in hosts)
@@ -535,6 +558,9 @@ def generate_mpi_prefix_cmd(
     else:
         raise ValueError(f"Unsupported MPI command: {mpi_cmd}")
 
+    if processes_per_node is not None:
+        prefix += f" --npernode {processes_per_node}"
+
     # CPU scheduling optimizations for I/O workloads
     unique_hosts: Set[str] = set()
     for host in hosts:
@@ -544,9 +570,18 @@ def generate_mpi_prefix_cmd(
     if len(unique_hosts) > 1:
         # Multi-host: prioritize even distribution across nodes
         prefix += " --bind-to none --map-by node"
+        logger.info("MPI BTL transport: auto (multi-host run; transport managed by network fabric)")
     else:
         # Single-host: optimize for NUMA domains
         prefix += " --bind-to none --map-by socket"
+        if mpi_btl == "vader":
+            prefix += " --mca btl vader,self"
+            logger.info("MPI BTL transport: vader (POSIX shared-memory)")
+        elif mpi_btl == "tcp":
+            prefix += " --mca btl tcp,self"
+            logger.info("MPI BTL transport: tcp (TCP loopback; recommended for containers/root)")
+        else:  # auto
+            logger.info("MPI BTL transport: auto (OpenMPI default selection)")
 
     if oversubscribe:
         prefix += " --oversubscribe"

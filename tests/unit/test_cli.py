@@ -18,7 +18,7 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 # Import argument builders from cli package
-from mlpstorage.cli import (
+from mlpstorage_py.cli import (
     add_training_arguments,
     add_checkpointing_arguments,
     add_vectordb_arguments,
@@ -30,14 +30,14 @@ from mlpstorage.cli import (
     PROGRAM_DESCRIPTIONS,
 )
 # Import parser functions from cli_parser module
-from mlpstorage.cli_parser import (
+from mlpstorage_py.cli_parser import (
     validate_args,
     update_args,
     apply_yaml_config_overrides,
     help_messages,
     prog_descriptions,
 )
-from mlpstorage.config import MODELS, ACCELERATORS, LLM_MODELS, EXEC_TYPE
+from mlpstorage_py.config import MODELS, ACCELERATORS, LLM_MODELS, EXEC_TYPE
 
 
 class TestHelpMessages:
@@ -483,6 +483,116 @@ class TestUpdateArgs:
         update_args(args)
         assert args.hosts == ['host1', 'host2', 'host3']
 
+    # -------------------------------------------------------------------
+    # Regression tests for https://github.com/mlcommons/storage/issues/322
+    #
+    # These exercise every form of `--hosts` the CLI can plausibly receive,
+    # including the forms that used to silently produce a single "host"
+    # containing whitespace and then crash `ssh`.
+    # -------------------------------------------------------------------
+
+    def test_hosts_space_separated_list_unchanged(self):
+        """`--hosts h1 h2 h3` -> argparse nargs='+' gives a clean list; pass through."""
+        args = argparse.Namespace(
+            hosts=['host1', 'host2', 'host3'],
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.hosts == ['host1', 'host2', 'host3']
+
+    def test_hosts_single_quoted_space_separated_string(self):
+        """`--hosts 'h1 h2 h3'` -> one token with spaces must be split (issue #322 Sample 3)."""
+        args = argparse.Namespace(
+            hosts=['srt017-e0 srt018-e0'],
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.hosts == ['srt017-e0', 'srt018-e0']
+
+    def test_hosts_equals_quoted_space_separated(self):
+        """`--hosts='h1 h2 h3'` -> same single-token-with-spaces case (issue #322 Sample 3)."""
+        args = argparse.Namespace(
+            hosts=['host-a host-b host-c'],
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.hosts == ['host-a', 'host-b', 'host-c']
+
+    def test_hosts_mixed_comma_and_space(self):
+        """Accept mixed comma/space separators in a single token."""
+        args = argparse.Namespace(
+            hosts=['host1, host2,host3  host4'],
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.hosts == ['host1', 'host2', 'host3', 'host4']
+
+    def test_hosts_mixed_list_and_internal_split(self):
+        """A list where some entries need splitting and others don't."""
+        args = argparse.Namespace(
+            hosts=['h1', 'h2 h3', 'h4,h5'],
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.hosts == ['h1', 'h2', 'h3', 'h4', 'h5']
+
+    def test_hosts_preserves_slots_suffix(self):
+        """`host:N` slot notation must survive the split."""
+        args = argparse.Namespace(
+            hosts=['host1:2 host2:4'],
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.hosts == ['host1:2', 'host2:4']
+
+    def test_hosts_strips_stray_whitespace_and_empty_tokens(self):
+        """Multiple spaces and leading/trailing whitespace don't produce empty entries."""
+        args = argparse.Namespace(
+            hosts=['   host1   host2 ,,, host3  '],
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.hosts == ['host1', 'host2', 'host3']
+
+    def test_hosts_empty_after_parsing_exits(self):
+        """An input that normalizes to zero tokens is a user error; exit cleanly."""
+        args = argparse.Namespace(
+            hosts=['   ,,,  '],
+            params=None,
+            mpi_params=None,
+        )
+        with pytest.raises(SystemExit):
+            update_args(args)
+
+    def test_num_client_hosts_derived_when_none(self):
+        """When argparse leaves num_client_hosts=None (user didn't pass it), derive from hosts."""
+        args = argparse.Namespace(
+            hosts=['h1', 'h2', 'h3'],
+            num_client_hosts=None,
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.num_client_hosts == 3
+
+    def test_num_client_hosts_respected_when_set(self):
+        """An explicit --num-client-hosts must not be overwritten."""
+        args = argparse.Namespace(
+            hosts=['h1', 'h2'],
+            num_client_hosts=5,
+            params=None,
+            mpi_params=None,
+        )
+        update_args(args)
+        assert args.num_client_hosts == 5
+
     def test_sets_num_client_hosts_from_hosts(self):
         """Should set num_client_hosts from hosts length."""
         args = argparse.Namespace(
@@ -503,7 +613,12 @@ class TestUpdateArgs:
         )
         update_args(args)
         assert args.runtime is not None
-
+    
+    def test_num_client_hosts_zero_is_preserved(self):
+        """Regression: --num-client-hosts 0 must not be re-derived from len(hosts)."""
+        args = argparse.Namespace(hosts=['h1', 'h2', 'h3'], num_client_hosts=0)
+        update_args(args)
+        assert args.num_client_hosts == 0
 
 class TestApplyYamlConfigOverrides:
     """Tests for apply_yaml_config_overrides function."""
@@ -607,3 +722,90 @@ class TestApplyYamlConfigOverrides:
         result = apply_yaml_config_overrides(args)
         assert result.debug is True  # Should not be overwritten
         assert result.loops == 5
+
+class TestParseArgumentsStorageFlagConsolidation:
+    """Regression tests for issue #367.
+
+    The CLI parser must not crash when a subcommand that doesn't define
+    --file / --object (reports, history, lockfile) is invoked, and must
+    still correctly consolidate those flags into data_access_protocol on
+    benchmark subcommands that do define them (training, checkpointing,
+    vectordb, kvcache).
+    """
+
+    @staticmethod
+    def _run(monkeypatch, argv):
+        """Invoke parse_arguments() with a synthetic sys.argv."""
+        from mlpstorage_py.cli_parser import parse_arguments
+        monkeypatch.setattr(sys, "argv", argv)
+        return parse_arguments()
+
+    # --- non-benchmark subcommands: must not raise AttributeError ---
+
+    def test_reportgen_does_not_crash_without_storage_flags(self, monkeypatch, tmp_path):
+        """Regression test for #367: `reports reportgen` must parse cleanly."""
+        args = self._run(
+            monkeypatch,
+            ["mlpstorage", "reports", "reportgen", "--results-dir", str(tmp_path)],
+        )
+        assert args.program == "reports"
+        assert args.command == "reportgen"
+        assert not hasattr(args, "file")
+        assert not hasattr(args, "object")
+
+    def test_history_does_not_crash_without_storage_flags(self, monkeypatch):
+        """`history show` must parse cleanly (no --file/--object on this parser)."""
+        args = self._run(monkeypatch, ["mlpstorage", "history", "show"])
+        assert args.program == "history"
+        assert args.command == "show"
+        assert not hasattr(args, "file")
+        assert not hasattr(args, "object")
+
+    def test_lockfile_does_not_crash_without_storage_flags(self, monkeypatch):
+        """`lockfile generate` must parse cleanly (no --file/--object on this parser)."""
+        args = self._run(monkeypatch, ["mlpstorage", "lockfile", "generate"])
+        assert args.program == "lockfile"
+        assert not hasattr(args, "file")
+        assert not hasattr(args, "object")
+
+    # --- benchmark subcommands: existing consolidation must still work ---
+
+    def test_training_run_consolidates_file_flag(self, monkeypatch, tmp_path):
+        """`training run --file` should set data_access_protocol='file'."""
+        args = self._run(
+            monkeypatch,
+            [
+                "mlpstorage", "training", "run",
+                "--model", "unet3d",
+                "--hosts", "localhost",
+                "--num-accelerators", "1",
+                "--accelerator-type", "h100",
+                "--client-host-memory-in-gb", "64",
+                "--data-dir", str(tmp_path / "data"),
+                "--results-dir", str(tmp_path / "results"),
+                "--file",
+            ],
+        )
+        assert args.data_access_protocol == "file"
+        assert not hasattr(args, "file")
+        assert not hasattr(args, "object")
+
+    def test_training_run_consolidates_object_flag(self, monkeypatch, tmp_path):
+        """`training run --object s3` should set data_access_protocol='s3'."""
+        args = self._run(
+            monkeypatch,
+            [
+                "mlpstorage", "training", "run",
+                "--model", "unet3d",
+                "--hosts", "localhost",
+                "--num-accelerators", "1",
+                "--accelerator-type", "h100",
+                "--client-host-memory-in-gb", "64",
+                "--data-dir", str(tmp_path / "data"),
+                "--results-dir", str(tmp_path / "results"),
+                "--object", "s3",
+            ],
+        )
+        assert args.data_access_protocol == "s3"
+        assert not hasattr(args, "file")
+        assert not hasattr(args, "object")

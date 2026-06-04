@@ -110,6 +110,11 @@ KVCACHE_GENERATION_MODES = ['none', 'fast', 'realistic']
 # Default runtime for KV Cache benchmark (seconds)
 KVCACHE_DEFAULT_DURATION = 60
 
+# VDB Benchmark Configuration
+VDB_INDEX_TYPES = ["DISKANN", "HNSW", "AISAQ", "IVF_FLAT", "IVF_SQ8", "FLAT"]
+VDB_ORCHESTRATION_MODES = ["ssh", "mpi"]
+VDB_BENCHMARK_MODES = ["timed", "query_count", "sweep"]
+
 MPIRUN = "mpirun"
 MPIEXEC = "mpiexec"
 MPI_CMDS = [MPIRUN, MPIEXEC]
@@ -126,7 +131,10 @@ ALLOW_RUN_AS_ROOT = True
 
 MAX_NUM_FILES_TRAIN = 128*1024
 
-DEFAULT_RESULTS_DIR = os.path.join(tempfile.gettempdir(), f"mlperf_storage_results")
+DEFAULT_RESULTS_DIR = os.environ.get(
+    "MLPERF_RESULTS_DIR",
+    os.path.join(tempfile.gettempdir(), "mlperf_storage_results"),
+)
 
 import enum
 
@@ -139,7 +147,7 @@ class EXIT_CODE(enum.IntEnum):
     CONFIGURATION_ERROR = 5
     FAILURE = 6
     TIMEOUT = 7
-    # Add more as needed
+    INTERRUPTED = 8
     
     def __str__(self):
         return f"{self.name} ({self.value})"

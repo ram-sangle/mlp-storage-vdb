@@ -51,11 +51,15 @@ HELP_MESSAGES = {
     ),
     'client_hosts': (
         "Space-separated list of IP addresses or hostnames of the participating hosts. "
-        "\nExample: '--hosts 192.168.1.1 192.168.1.2 192.168.1.3' or '--hosts host1 host2 host3'. Slots can "
+        "\nExample: '--hosts 192.168.1.1 192.168.1.2 192.168.1.3' or '--hosts host1 host2 host3'. "
+        "Comma-separated values are also accepted: '--hosts host1,host2,host3'. "
+        "Slots can "
         "be specified by appending ':<num_slots>' to a hostname like so: '--hosts host1:2 host2:2'. This "
         "example will run 2 accelerators on each host. If slots are not specified the number of processes "
         "will be equally distributed across the hosts with any remainder being distributed evenly on the "
-        "remaining hosts in the order they are listed."
+        "remaining hosts in the order they are listed. "
+        "\nDo NOT use '--hosts=h1 h2' (with '=' and space); argparse will only bind 'h1' to --hosts "
+        "and treat 'h2' as a stray positional argument. Use '--hosts h1 h2' or '--hosts=h1,h2' instead."
     ),
     'category': "Benchmark category to be submitted.",
     'results_dir': "Directory where the benchmark results will be saved.",
@@ -188,34 +192,29 @@ def add_universal_arguments(parser):
         help="Path to YAML file with argument overrides"
     )
 
-    # Create a mutually exclusive group for file/object options
-    access_proto = standard_args.add_mutually_exclusive_group(required=True)
-    access_proto.add_argument(
-        "--file",
-        action="store_true",
-        help="Use POSIX files as the data access method"
-    )
-    access_proto.add_argument(
-        "--object",
-        nargs="?",
-        type=str,
-        const="s3",
-        choices=["s3"],
-        help="Use the given Object API as the data access method, defaults to S3"
-    )
+    # NOTE: --file / --object are intentionally NOT added here. They are
+    # declared exclusively in ``add_storage_type_arguments`` and attached
+    # only to benchmark subparsers (training, checkpointing, vectordb,
+    # kvcache). Adding them in both places would raise
+    # ``argparse.ArgumentError: argument --file: conflicting option string``
+    # the moment any subparser builder calls both functions — see issue #376.
 
-    # Create a mutually exclusive group for closed/open options
+    # Create a mutually exclusive group for closed/open options.
+    # Both flags set their own independent boolean so downstream code can
+    # distinguish "--open passed", "--closed passed", and "neither passed".
     submission_group = standard_args.add_mutually_exclusive_group()
     submission_group.add_argument(
         "--open",
-        action="store_false",
-        dest="closed",
+        action="store_true",
+        dest="open",
         default=False,
         help="Run as an open submission"
     )
     submission_group.add_argument(
         "--closed",
         action="store_true",
+        dest="closed",
+        default=False,
         help="Run as a closed submission"
     )
 
@@ -284,11 +283,62 @@ def add_mpi_arguments(parser):
         action="store_true"
     )
     mpi_options.add_argument(
+        '--mpi-btl',
+        choices=['auto', 'vader', 'tcp'],
+        default='auto',
+        help=(
+            "MPI Byte Transport Layer for single-host runs. "
+            "'auto' lets OpenMPI select automatically (default; works on most systems). "
+            "'vader' forces POSIX shared-memory transport (fast; may fail in containers or as root). "
+            "'tcp' forces TCP loopback transport (universally compatible; recommended for containers "
+            "and root environments). Has no effect on multi-host runs."
+        )
+    )
+    mpi_options.add_argument(
         '--mpi-params',
         nargs="+",
         type=str,
         action="append",
         help="Other MPI parameters that will be passed to MPI"
+    )
+
+
+def add_storage_type_arguments(parser):
+    """Add --file / --object storage-type selector to a subcommand parser.
+
+    This group is optional (neither flag is required at parse time), so it can
+    be safely added to every benchmark subparser — VectorDB, KV-cache, training,
+    and checkpointing alike.  Benchmarks that do not yet use object storage
+    simply ignore the flags; those that do can check ``args.file`` /
+    ``args.object``.
+
+    When --object is passed the runtime reads S3 credentials and endpoint from
+    .env (AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+    AWS_REGION, BUCKET, STORAGE_LIBRARY).  --file expects a local path
+    reachable on every participating host.
+
+    Args:
+        parser: Argparse subcommand parser to add arguments to.
+    """
+    storage_group = parser.add_argument_group("Storage Type")
+    access_proto = storage_group.add_mutually_exclusive_group(required=False)
+    access_proto.add_argument(
+        "--file",
+        action="store_true",
+        help="Use POSIX files as the data access method"
+    )
+    access_proto.add_argument(
+        "--object",
+        nargs="?",
+        type=str,
+        const="s3",
+        choices=["s3"],
+        help=(
+            "Use the given Object API as the data access method, defaults to S3. "
+            "S3 credentials and endpoint are read from environment variables or "
+            "a .env file (AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, "
+            "AWS_SECRET_ACCESS_KEY, AWS_REGION, BUCKET, STORAGE_LIBRARY)."
+        ),
     )
 
 

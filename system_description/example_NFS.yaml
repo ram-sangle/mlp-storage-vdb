@@ -1,5 +1,5 @@
 system_under_test:
-    system:
+    solution:
         submission_name: NFS_example
         friendly_description: A generic example based upon NFS
         architecture:
@@ -13,7 +13,8 @@ system_under_test:
             simultaneous_write: true
             simultaneous_read: true
             remap_time_in_seconds: 0
-    storage:
+    deployment: "onprem"
+    product_nodes:
         - friendly_description: NFS Server
           quantity: 1
           chassis: 
@@ -26,12 +27,11 @@ system_under_test:
              power:
                 min_psus_active: 1
                 psus_configured:
-                    - Name: Sparke 100
-                      PowerCapacityWatts: 1800
-                      Efficiency: Platinum
-                    - Name: Sparke 100
-                      PowerCapacityWatts: 1800
-                      Efficiency: Platinum
+                    - vendor_name: Sparkle
+                      model_name: S100
+                      power_capacity_watts: 1800
+                      efficiency: Platinum
+                      unit_count: 2
           networking:
               - type: ethernet
                 speed: 100
@@ -64,7 +64,7 @@ system_under_test:
                 value: "21"
               - name: bazbarfoo
                 value: "31"
-    total_rack_units: 2
+    total_rack_units: 1
     clients:
         - friendly_description: Benchmark load system
           quantity: 16
@@ -78,12 +78,11 @@ system_under_test:
              power:
                 min_psus_active: 1
                 psus_configured:
-                    - Name: Sparke 100
-                      PowerCapacityWatts: 1800
-                      Efficiency: Platinum
-                    - Name: Sparke 100
-                      PowerCapacityWatts: 1800
-                      Efficiency: Platinum
+                    - vendor_name: Sparkle
+                      model_name: S100
+                      power_capacity_watts: 1800
+                      efficiency: Platinum
+                      unit_count: 2
           networking:
              - type: ethernet
                speed: 100

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlpstorage"
-version = "3.0"
+version = "3.0.3"
 description = "MLPerf Storage Benchmark Suite"
 readme = "README.md"
 authors = [
@@ -15,11 +15,11 @@ dependencies = [
     "psutil>=5.9",
     "pyarrow",
     "pyyaml>=6.0",
-    "packaging>=21.0", 
+    "packaging>=21.0",
     "rich>=13.0",
     "s3dlio>=0.9.86",
     "dlio-benchmark", # Required dependency
-    "yamale",
+    "pydantic>=2.13.4",
 ]
 
 [project.optional-dependencies]

@@ -84,3 +84,41 @@ CHECKPOINT_FILE_MAP = {
     "llama3-70b": "llama3_70b.yaml",
     "llama3-405b": "llama3_405b.yaml",
 }
+
+# Rules.md 2.1.6 / 3.6.1 codeDirectoryContents / trainingClosedSubmissionChecksum
+# Reference hex MD5 of the canonical code/ tree per version. None means
+# "not yet pinned" — runtime check will emit a WARNING via warn_violation
+# (D-12) and pass. Use `python -m mlpstorage_py.submission_checker.tools.\
+# compute_code_checksum <path>` to regenerate.
+REFERENCE_CHECKSUMS: dict[str, str | None] = {
+    "v2.0": None,
+    "v3.0": None,
+    "default": None,
+}
+
+# Rules.md 2.1.17 runTimestamps — exactly 6 (1 warm-up + 5 measured)
+RUN_TIMESTAMP_COUNT = 6
+
+# Directory-name prefixes excluded from the code-tree MD5 (Rules.md 2.1.6).
+# Match is against POSIX-joined relative paths with a trailing slash so that
+# `.gitignore` (file) does not collide with `.git/` (directory prefix).
+MD5_EXCLUDE_PREFIXES: tuple[str, ...] = (
+    ".git/",
+    "__pycache__/",
+    ".pytest_cache/",
+    ".venv/",
+    "node_modules/",
+    "build/",
+    "dist/",
+    ".tox/",
+)
+
+# Filename patterns excluded from the code-tree MD5 (Rules.md 2.1.6).
+# Matched against the basename. ``.egg-info`` is handled at the prefix level
+# (any directory ending in ``.egg-info``) — keep that in the predicate, not here.
+MD5_EXCLUDE_FILENAMES: tuple[str, ...] = (
+    "*.pyc",
+    "*.pyo",
+    ".DS_Store",
+    "Thumbs.db",
+)

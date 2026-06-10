@@ -41,10 +41,13 @@ RUN_REQUIRED_FOLDERS = {
     "default": ["dlio_config"],
 }
 
+# BUG-02 (D-E2): prior versions used training_run.* prefixes here — should be
+# checkpointing_run.* (Rules.md 2.1.25 checkpointingFiles). The dot before
+# "log" is also escaped (\.) to avoid latent over-matching.
 CHECKPOINT_REQUIRED_FILES = {
-    "v2.0": [r"training_run\.stdout.log", r"training_run\.stderr.log", r".*output\.json", r".*per_epoch_stats\.json", r".*summary\.json", r"dlio\.log"],
-    "v3.0": [r"training_run\.stdout.log", r"training_run\.stderr.log", r".*output\.json", r".*per_epoch_stats\.json", r".*summary\.json", r"dlio\.log"],
-    "default": [r"training_run\.stdout.log", r"training_run\.stderr.log", r".*output\.json", r".*per_epoch_stats\.json", r".*summary\.json", r"dlio\.log"],
+    "v2.0": [r"checkpointing_run\.stdout\.log", r"checkpointing_run\.stderr\.log", r".*output\.json", r".*per_epoch_stats\.json", r".*summary\.json", r"dlio\.log"],
+    "v3.0": [r"checkpointing_run\.stdout\.log", r"checkpointing_run\.stderr\.log", r".*output\.json", r".*per_epoch_stats\.json", r".*summary\.json", r"dlio\.log"],
+    "default": [r"checkpointing_run\.stdout\.log", r"checkpointing_run\.stderr\.log", r".*output\.json", r".*per_epoch_stats\.json", r".*summary\.json", r"dlio\.log"],
 }
 
 CHECKPOINT_REQUIRED_FOLDERS = {

@@ -3,6 +3,7 @@ from .base import BaseCheck
 from ..constants import *
 from ..configuration.configuration import Config
 from ..loader import SubmissionLogs
+from ..rule_registry import rule
 
 import os
 import re
@@ -27,6 +28,7 @@ class CheckpointingCheck(BaseCheck):
         super().__init__(log=log, path=submissions_logs.loader_metadata.folder)
         self.config = config
         self.submissions_logs = submissions_logs.checkpoint_files
+        self.system_file = submissions_logs.system_file  # D-D3: needed by CHKPT-04/05/06 for benchmark_API + capabilities reads
         self.name = "checkpointing checks"
         self.mode = submissions_logs.loader_metadata.mode
         self.benchmark = submissions_logs.loader_metadata.benchmark
@@ -123,52 +125,54 @@ class CheckpointingCheck(BaseCheck):
         
         return valid
     
+    @rule("4.6.1", "checkpointClosedMpiProcesses")
     def closed_mpi_processes(self):
-        """
-        For CLOSED submissions, verify MPI processes match requirements per model.
+        """For CLOSED submissions, verify MPI processes match requirements per model.
+
+        BUG-03 fix (D-C4): derives model_key BEFORE the subset-branch check so
+        it is always defined when used. Replaces the inline model_process_requirements
+        dict with self.config.get_closed_mpi_processes(model_key) indirection.
+        Uses self.log_violation (QUAL-02 retro-fit) instead of bare self.log.error.
+
+        subset mode: requires exactly 8 processes for any model.
+        non-subset (combined/full) mode: requires CLOSED_MPI_PROCESSES[model_key]
+        total processes (Rules.md Table 2 — TP*PP*DP).
         """
         valid = True
         if self.mode != "checkpointing":
             return valid
-        
-        model_process_requirements = {
-            "8b": 8,
-            "70b": 64,
-            "405b": 512,
-            "1t": 1024
-        }
-        
+
         for summary, metadata, _ in self.submissions_logs:
             verification = metadata.get("verification", "closed")
-            
+
             if verification == "closed":
                 checkpoint_mode = metadata.get("params_dict", {}).get("checkpoint.mode", "").lower()
                 model_name = metadata.get("args", {}).get("model", "").lower()
                 num_processes = metadata.get("args", {}).get("num_processes", 0)
+
+                # BUG-03 fix: derive model_key BEFORE any branch that uses it
+                model_size = re.search(r"(8b|70b|405b|1t)", model_name)
+                model_key = model_size.group(1) if model_size else None
+
                 if checkpoint_mode == "subset":
                     if num_processes != 8:
-                        self.log.error(
-                            "CLOSED submission with model %s in subset mode requires %d processes, got %d",
-                            model_key,
-                            8,
-                            num_processes
+                        self.log_violation(
+                            "4.6.1", "checkpointClosedMpiProcesses", self.path,
+                            "CLOSED subset mode requires 8 processes, got %d (model: %s)",
+                            num_processes, model_key or model_name,
                         )
                         valid = False
                 else:
-                    model_size = re.search(r"(8b|70b|405b|1t)", model_name)
-                    if model_size:
-                        model_key = model_size.group(1)
-                        required_processes = model_process_requirements.get(model_key)
-                        
-                        if required_processes and num_processes != required_processes:
-                            self.log.error(
-                                "CLOSED submission with model %s requires %d processes, got %d",
-                                model_key,
-                                required_processes,
-                                num_processes
+                    if model_key:
+                        required = self.config.get_closed_mpi_processes(model_key)
+                        if num_processes != required:
+                            self.log_violation(
+                                "4.6.1", "checkpointClosedMpiProcesses", self.path,
+                                "CLOSED submission model %s requires %d processes, got %d",
+                                model_key, required, num_processes,
                             )
                             valid = False
-        
+
         return valid
     
     def closed_accelerators_per_host(self):

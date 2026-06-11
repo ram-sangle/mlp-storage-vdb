@@ -8,7 +8,7 @@ from ..utils import *
 
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class DirectoryCheck(BaseCheck):
@@ -433,11 +433,20 @@ class DirectoryCheck(BaseCheck):
             self.log.warning("No checkpointing files found in submission logs")
             return valid
 
-        # Parse all checkpoint run data
+        # Parse all checkpoint run data.
+        # max_gap holds the shortest run duration seen so far; it must stay a
+        # timedelta to compare with run_duration. Sentinel float("inf") would
+        # raise "'<' not supported between instances of 'datetime.timedelta'
+        # and 'float'" on the first iteration.
         checkpoint_run_data = []
-        max_gap = float("inf")
+        max_gap = timedelta.max
 
         for checkpoint_dict, _, timestamp_dir in self.submissions_logs.checkpoint_files:
+            if checkpoint_dict is None:
+                # Missing summary.json — reported under rule 2.1.22 by
+                # SubmissionStructureCheck; skip this entry rather than
+                # raise TypeError on the dict lookup below.
+                continue
             try:
                 # Parse timestamps from checkpoint_dict
                 start_time = datetime.fromisoformat(checkpoint_dict["start"])

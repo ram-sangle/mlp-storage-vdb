@@ -15,9 +15,11 @@ from .loader import Loader
 # Import checkers
 from .checks.checkpointing_checks import CheckpointingCheck
 from .checks.directory_checks import DirectoryCheck
+from .checks.kvcache_checks import KVCacheCheck
 from .checks.submission_structure_checks import SubmissionStructureCheck
 from .checks.system_yaml_schema_checks import SystemYamlSchemaCheck
 from .checks.training_checks import TrainingCheck
+from .checks.vdb_checks import VdbCheck
 
 
 # Import result exporter
@@ -92,7 +94,7 @@ def main():
     results = {}
     systems = {}
     errors = []
-    checkers = [DirectoryCheck, TrainingCheck, CheckpointingCheck]
+    checkers = [DirectoryCheck, TrainingCheck, CheckpointingCheck, VdbCheck, KVCacheCheck]
 
     # Per PLAN.md 01-03 D-02: run structural hierarchy checks ONCE before the
     # per-benchmark loader loop. Failures are accumulated into `errors` but do

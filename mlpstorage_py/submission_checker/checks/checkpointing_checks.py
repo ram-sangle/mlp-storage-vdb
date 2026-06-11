@@ -4,6 +4,7 @@ from ..constants import *
 from ..configuration.configuration import Config
 from ..loader import SubmissionLogs
 from ..rule_registry import rule
+from .helpers import _check_filesystem_separation, _pair_checkpoint_runs, _parse_iso_gap
 
 import os
 import re
@@ -48,7 +49,42 @@ class CheckpointingCheck(BaseCheck):
             self.closed_checkpoint_parameters,
             self.checkpoint_path_args,
             self.subset_run_validation,
+            self.open_mpi_processes,           # CHKPT-01 (Task 2a)
+            self.cache_flush_validation,       # CHKPT-02 (Task 2a)
+            self.total_test_duration,          # CHKPT-03 (Task 2a)
+            # CHKPT-04..06 appended by Task 2b
         ]
+
+    def _get_benchmark_api(self) -> str:
+        """Return 'file' or 'object' (default 'file') from the schema-validated system YAML.
+
+        Reads self.system_file (D-D3 assignment already done by Plan 02-01 Task 2)
+        with safe .get chain. Per D-B7, trusts the schema-validation pass and does
+        not re-validate.
+        """
+        if not self.system_file:
+            return "file"
+        return (
+            self.system_file.get("system_under_test", {})
+                            .get("solution", {})
+                            .get("architecture", {})
+                            .get("benchmark_API", "file")
+        )
+
+    def _get_capability(self, field: str):
+        """Return capabilities.<field> from the system YAML, or None if absent.
+
+        SystemYamlSchemaCheck owns the 'field missing' violation per D-A3;
+        CHKPT-04/05 (Task 2b) silent-skip when this returns None to avoid double-emit.
+        """
+        if not self.system_file:
+            return None
+        return (
+            self.system_file.get("system_under_test", {})
+                            .get("solution", {})
+                            .get("capabilities", {})
+                            .get(field)
+        )
     
     def checkpoint_data_size_ratio(self):
         """
@@ -369,27 +405,172 @@ class CheckpointingCheck(BaseCheck):
         valid = True
         if self.mode != "checkpointing":
             return valid
-        
+
         for summary, metadata, _ in self.submissions_logs:
             params_dict = metadata.get("params_dict", {})
             checkpoint_mode = params_dict.get("checkpoint.mode", "")
-            
+
             if checkpoint_mode == "subset":
                 num_accelerators = summary.get("num_accelerators", 0)
                 model_name = metadata.get("args", {}).get("model", "").lower()
-                
+
                 if num_accelerators != 8:
                     self.log.error(
                         "Subset run requires exactly 8 accelerators, got %d",
                         num_accelerators
                     )
                     valid = False
-                
+
                 if "8b" in model_name:
                     self.log.error(
                         "Subset run cannot use 8B model: %s",
                         model_name
                     )
                     valid = False
-        
+
+        return valid
+
+    # -------------------------------------------------------------------------
+    # CHKPT-01..03 — Phase 2 Plan 02-03 Task 2a
+    # -------------------------------------------------------------------------
+
+    @rule("4.6.4", "checkpointOpenSubmissionScaling")
+    def open_mpi_processes(self):
+        """For OPEN submissions, verify num_processes is a positive multiple of TP*PP. (Rules.md 4.6.4)
+
+        TP and PP come from configs/dlio/workload/llama3_{key}.yaml via
+        Config.get_model_parallelism. Silent-skips when model regex doesn't match
+        one of {8b, 70b, 405b, 1t} (different rule's surface).
+        """
+        valid = True
+        if self.mode != "checkpointing":
+            return valid
+        for summary, metadata, _ in self.submissions_logs:
+            verification = metadata.get("verification", "closed")
+            if verification != "open":
+                continue
+            model_name = metadata.get("args", {}).get("model", "").lower()
+            num_processes = metadata.get("args", {}).get("num_processes", 0)
+            model_size = re.search(r"(8b|70b|405b|1t)", model_name)
+            if not model_size:
+                continue
+            model_key = model_size.group(1)
+            tp, pp = self.config.get_model_parallelism(model_key)
+            tp_pp = tp * pp
+            if tp_pp == 0:
+                continue
+            if num_processes <= 0 or num_processes % tp_pp != 0:
+                self.log_violation(
+                    "4.6.4", "checkpointOpenSubmissionScaling", self.path,
+                    "num_processes (%d) is not a positive multiple of TP*PP (%d) for model %s",
+                    num_processes, tp_pp, model_key,
+                )
+                valid = False
+        return valid
+
+    @rule("4.7.1", "checkpointCacheFlushValidation")
+    def cache_flush_validation(self):
+        """Detect cache-flush pattern in split-mode runs (write then read with <=30s gap).
+        (Rules.md 4.7.1)
+
+        Combined-mode submissions (write and read in the same run) are valid per
+        Pitfall 15 — return True with no violation when no split-mode pairs exist.
+        Reads timestamps from summary.json (tries 'end_time'/'start_time' first,
+        then 'end'/'start' fallback per RESEARCH.md Gray Area 3).
+
+        30-second threshold is strict per Rules.md 4.7.1; no slop applied (Gemini
+        review concern #3 noted; revisit with CACHE_FLUSH_SLOP_SECONDS constant
+        in constants.py if filesystem-metadata latency becomes empirically
+        problematic).
+        """
+        valid = True
+        if self.mode != "checkpointing":
+            return valid
+        pairs = _pair_checkpoint_runs(self.submissions_logs)
+        if not pairs:
+            return valid
+        for write_entry, read_entry in pairs:
+            write_summary, _, write_ts = write_entry
+            read_summary, _, read_ts = read_entry
+            write_end = (write_summary or {}).get("end_time") or (write_summary or {}).get("end")
+            read_start = (read_summary or {}).get("start_time") or (read_summary or {}).get("start")
+            if write_end is None or read_start is None:
+                self.log_violation(
+                    "4.7.1", "checkpointCacheFlushValidation", self.path,
+                    "cannot compute cache-flush gap: missing end_time/start_time in summary.json "
+                    "(write_ts=%s, read_ts=%s)", write_ts, read_ts,
+                )
+                valid = False
+                continue
+            try:
+                gap_seconds = _parse_iso_gap(write_end, read_start)
+            except (ValueError, TypeError) as e:
+                self.log_violation(
+                    "4.7.1", "checkpointCacheFlushValidation", self.path,
+                    "cannot parse timestamps for gap computation: %s (write_ts=%s, read_ts=%s)",
+                    str(e), write_ts, read_ts,
+                )
+                valid = False
+                continue
+            if gap_seconds > 30:
+                self.log_violation(
+                    "4.7.1", "checkpointCacheFlushValidation", self.path,
+                    "cache-flush gap %.1f seconds exceeds 30-second limit "
+                    "(write end=%s, read start=%s)",
+                    gap_seconds, write_end, read_start,
+                )
+                valid = False
+        return valid
+
+    @rule("4.7.2", "checkpointTotalTestDuration")
+    def total_test_duration(self):
+        """Compute and log total checkpoint test duration. (Rules.md 4.7.2)
+
+        Per D-D1: happy path emits via self.log.info (informational, not a violation).
+        ResultExporter / RPT-01 (v2 milestone) will surface this value in CSV later.
+        Failure path (missing/malformed timestamps) emits via log_violation.
+        """
+        valid = True
+        if self.mode != "checkpointing":
+            return valid
+        pairs = _pair_checkpoint_runs(self.submissions_logs)
+        if not pairs:
+            return valid
+        first_write_summary, _, first_write_ts = pairs[0][0]
+        last_read_summary, _, last_read_ts = pairs[-1][1]
+        first_write_start = (first_write_summary or {}).get("start_time") or (first_write_summary or {}).get("start")
+        last_read_end = (last_read_summary or {}).get("end_time") or (last_read_summary or {}).get("end")
+        if first_write_start is None or last_read_end is None:
+            self.log_violation(
+                "4.7.2", "checkpointTotalTestDuration", self.path,
+                "cannot compute total duration: missing start_time/end_time in summary.json",
+            )
+            return False
+        try:
+            total_duration = _parse_iso_gap(first_write_start, last_read_end)
+        except (ValueError, TypeError) as e:
+            self.log_violation(
+                "4.7.2", "checkpointTotalTestDuration", self.path,
+                "cannot compute total duration: %s", str(e),
+            )
+            return False
+        # remap_interval is best-effort — failure does not invalidate the duration log.
+        first_read_summary, _, _ = pairs[0][1]
+        last_write_summary, _, _ = pairs[-1][0]
+        first_read_start = (first_read_summary or {}).get("start_time") or (first_read_summary or {}).get("start")
+        last_write_end = (last_write_summary or {}).get("end_time") or (last_write_summary or {}).get("end")
+        remap_interval = None
+        if first_read_start and last_write_end:
+            try:
+                remap_interval = _parse_iso_gap(last_write_end, first_read_start)
+            except (ValueError, TypeError):
+                remap_interval = None
+        # D-D1: happy path uses self.log.info, NOT log_violation
+        self.log.info(
+            "[4.7.2 checkpointTotalTestDuration] %s: "
+            "total_test_duration_seconds=%.1f "
+            "(write_start=%s, read_end=%s, remap_interval=%s)",
+            self.path, total_duration, first_write_start, last_read_end,
+            f"{remap_interval:.1f}" if remap_interval is not None else "N/A",
+        )
         return valid

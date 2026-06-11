@@ -1,29 +1,34 @@
 """SystemYamlSchemaCheck — Phase 2 D-A1.
 
-Skeleton landed by Plan 02-01 so Plan 02-02 can flesh out the
-``schema_validate_all_system_yamls`` method without re-defining
-``SCHEMA_ERROR_RULE_MAP``.
+Implements ``schema_validate_all_system_yamls``: walks every
+``<division>/<submitter>/systems/<name>.yaml`` under the submission root,
+calls ``validate_file`` from ``schema_validator``, and emits one
+``log_violation`` per Pydantic error string.  Errors are tagged with the
+rule_id from ``SCHEMA_ERROR_RULE_MAP``; unmapped loc strings fall through to
+the ``("2.1.7", "systemsDirectoryFiles")`` default (D-A2).
 
-Per D-A2, the map covers the four locked field paths plus a default fallback
-to (``"2.1.7"``, ``"systemsDirectoryFiles"``) handled by the consumer via
-``.get(loc, default)``.
+Runs once before the ``for logs in loader.load():`` loop in ``main.py``
+(D-A1, mirrors Phase 1's ``SubmissionStructureCheck`` plug-in pattern).
+Returns bool; feeds the existing ``errors`` accumulator without aborting
+(QUAL-01: accumulate-don't-abort).
 
-Architecture: mirrors Phase 1's ``SubmissionStructureCheck`` plug-in pattern
-(D-02 of Phase 1) — instantiated once before the ``for logs in loader.load():``
-loop in ``main.py``, returns bool, feeds the ``valid &= …`` accumulator without
-aborting (QUAL-01). Plan 02-02 wires the instance into ``main.py`` and implements
-the check method.
-
-Plan 02-02 tasks:
-  (a) Implement ``schema_validate_all_system_yamls`` and append to ``self.checks``.
-  (b) Verify Pydantic ``err["loc"]`` string format for Capabilities.check_remap_time
-      (Rule-13 cross-field validator) empirically and extend SCHEMA_ERROR_RULE_MAP.
-  (c) Add ``from ..schema_validator import validate_file`` import.
-  (d) Wire instance into ``main.py``.
+Empirical verification — Rule 13 loc string (2026-06-10):
+  Pydantic v2 ``model_validator(mode='after')`` on the ``Capabilities``
+  model fires at loc = (``system_under_test``, ``solution``, ``capabilities``)
+  which stringifies to ``"system_under_test -> solution -> capabilities"``.
+  Contrary to RESEARCH.md §Surfaced Gray Areas #4 (which predicted an empty
+  tuple / empty string), Pydantic v2 propagates the path to the container
+  model through which the validator ran.  Both Rule-13 trigger conditions
+  (both_simultaneous AND remap≠0; either_false AND remap==0) produce the
+  same loc string.
 """
+
+import os
 
 from .base import BaseCheck
 from ..configuration.configuration import Config
+from ..utils import list_dir, list_files
+from ...system_description.schema_validator import validate_file
 
 
 class SystemYamlSchemaCheck(BaseCheck):
@@ -32,14 +37,16 @@ class SystemYamlSchemaCheck(BaseCheck):
     Runs once before the per-benchmark loader loop (mirrors Phase 1's
     ``SubmissionStructureCheck`` plug-in pattern; D-A1).
 
-    Plan 02-01 ships the skeleton (constructor + rule map). Plan 02-02
-    adds ``schema_validate_all_system_yamls()`` and wires the instance
-    into ``main.py``.
+    ``SCHEMA_ERROR_RULE_MAP`` maps Pydantic loc strings (formatted as
+    ``" -> ".join(str(p) for p in err["loc"])``) to ``(rule_id, rule_name)``
+    tuples.  Unmapped loc strings → fallback ``("2.1.7", "systemsDirectoryFiles")``.
     """
 
     SCHEMA_ERROR_RULE_MAP: dict[str, tuple[str, str]] = {
         # D-A2: locked field paths → (rule_id, rule_name) for violation tagging.
         # Fallback for unmapped paths: ("2.1.7", "systemsDirectoryFiles").
+
+        # Field-level paths for individual capability fields (presence + type).
         "system_under_test -> solution -> capabilities -> remap_time_in_seconds":
             ("4.7.3", "checkpointRemappingTimeReporting"),
         "system_under_test -> solution -> capabilities -> simultaneous_write":
@@ -48,9 +55,18 @@ class SystemYamlSchemaCheck(BaseCheck):
             ("4.7.4", "checkpointSimultaneousRwSupport"),
         "system_under_test -> solution -> capabilities -> multi_host":
             ("4.7.4", "checkpointSimultaneousRwSupport"),
-        # Plan 02-02 empirically verifies the Pydantic loc string for
-        # Capabilities.check_remap_time (Rule-13 cross-field) and adds
-        # that entry; fallback path is ("2.1.7", "systemsDirectoryFiles").
+
+        # Rule-13 cross-field entry (Plan 02-02 empirical verification, 2026-06-10):
+        # Capabilities.check_remap_time model_validator(mode='after') fires at loc
+        # ("system_under_test", "solution", "capabilities") → loc_str below.
+        # Observed trigger conditions:
+        #   (1) simultaneous_write=True, simultaneous_read=True, remap_time_in_seconds≠0
+        #   (2) simultaneous_write=False (or simultaneous_read=False), remap_time_in_seconds==0
+        # Both produce loc_str "system_under_test -> solution -> capabilities".
+        # Note: RESEARCH.md §Gray Area 4 predicted empty string "" — empirical run
+        # showed Pydantic v2 propagates the container path, not an empty tuple.
+        "system_under_test -> solution -> capabilities":
+            ("4.7.3", "checkpointRemappingTimeReporting"),
     }
 
     def __init__(self, log, config: Config, root_path: str):
@@ -68,9 +84,56 @@ class SystemYamlSchemaCheck(BaseCheck):
         self.init_checks()
 
     def init_checks(self):
-        """Register check methods.
+        """Register check methods.  Called by ``__init__``."""
+        self.checks = [self.schema_validate_all_system_yamls]
 
-        Plan 02-02 appends ``self.schema_validate_all_system_yamls`` here.
+    def schema_validate_all_system_yamls(self) -> bool:
+        """Walk every ``<division>/<submitter>/systems/<name>.yaml`` and validate.
+
+        For each YAML file under ``<root>/{closed,open}/<submitter>/systems/``,
+        calls ``validate_file`` and emits one ``log_violation`` per returned
+        error string.  The violation rule_id is looked up in
+        ``SCHEMA_ERROR_RULE_MAP`` (keyed by the loc string); unmapped loc
+        strings fall through to ``("2.1.7", "systemsDirectoryFiles")`` (D-A2).
+
+        Returns:
+            True if zero errors were found across all YAMLs.
+            False if any error was found (accumulate-don't-abort: every YAML
+            and every error within each YAML is checked; reporting does not
+            stop on the first failure per QUAL-01 + PITFALLS.md #11).
+
+        Side-effects:
+            Calls ``self.log_violation(rule_id, rule_name, yaml_path, '%s', msg)``
+            for each error (QUAL-02: lazy-format style, rule-ID prefix).
         """
-        # Plan 02-02 implements schema_validate_all_system_yamls and adds it here.
-        self.checks = []
+        valid = True
+        if not os.path.isdir(self.root_path):
+            return valid  # main.py handles the missing-input case elsewhere
+
+        for division in list_dir(self.root_path):
+            if division not in ("closed", "open"):
+                continue
+            div_path = os.path.join(self.root_path, division)
+            if not os.path.isdir(div_path):
+                continue
+            for submitter in list_dir(div_path):
+                systems_path = os.path.join(div_path, submitter, "systems")
+                if not os.path.isdir(systems_path):
+                    continue  # STRUCT-05 owns the "missing systems/" diagnostic
+                for fname in list_files(systems_path):
+                    if not fname.endswith(".yaml"):
+                        continue
+                    yaml_path = os.path.join(systems_path, fname)
+                    errors = validate_file(yaml_path)
+                    for error_str in errors:
+                        if ": " in error_str:
+                            loc_str, msg = error_str.split(": ", 1)
+                        else:
+                            loc_str = ""
+                            msg = error_str
+                        rule_id, rule_name = self.SCHEMA_ERROR_RULE_MAP.get(
+                            loc_str, ("2.1.7", "systemsDirectoryFiles")
+                        )
+                        self.log_violation(rule_id, rule_name, yaml_path, "%s", msg)
+                        valid = False
+        return valid

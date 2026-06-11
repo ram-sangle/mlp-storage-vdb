@@ -52,7 +52,9 @@ class CheckpointingCheck(BaseCheck):
             self.open_mpi_processes,           # CHKPT-01 (Task 2a)
             self.cache_flush_validation,       # CHKPT-02 (Task 2a)
             self.total_test_duration,          # CHKPT-03 (Task 2a)
-            # CHKPT-04..06 appended by Task 2b
+            self.remapping_time_reporting,     # CHKPT-04 (Task 2b)
+            self.simultaneous_rw_support,      # CHKPT-05 (Task 2b)
+            self.checkpoint_filesystem_check,  # CHKPT-06 (Task 2b)
         ]
 
     def _get_benchmark_api(self) -> str:
@@ -573,4 +575,124 @@ class CheckpointingCheck(BaseCheck):
             self.path, total_duration, first_write_start, last_read_end,
             f"{remap_interval:.1f}" if remap_interval is not None else "N/A",
         )
+        return valid
+
+    # -------------------------------------------------------------------------
+    # CHKPT-04..06 — Phase 2 Plan 02-03 Task 2b
+    # -------------------------------------------------------------------------
+
+    @rule("4.7.3", "checkpointRemappingTimeReporting")
+    def remapping_time_reporting(self):
+        """Cross-check declared remap_time_in_seconds against observed remap interval.
+        (Rules.md 4.7.3)
+
+        Schema validation (SystemYamlSchemaCheck, Plan 02-02) covers presence + type +
+        Rule-13 consistency per D-A3. This runtime cross-check uses a 0.5x tolerance
+        band: observed interval should be at least declared * 0.5 (else likely
+        under-reported).
+
+        Returns True silently if the capability field is absent — SystemYamlSchemaCheck
+        owns the missing-field violation.
+        """
+        valid = True
+        if self.mode != "checkpointing":
+            return valid
+        declared = self._get_capability("remap_time_in_seconds")
+        if declared is None:
+            return valid
+        if declared == 0:
+            return valid
+        pairs = _pair_checkpoint_runs(self.submissions_logs)
+        if not pairs:
+            return valid
+        first_read_summary, _, _ = pairs[0][1]
+        last_write_summary, _, _ = pairs[-1][0]
+        first_read_start = (first_read_summary or {}).get("start_time") or (first_read_summary or {}).get("start")
+        last_write_end = (last_write_summary or {}).get("end_time") or (last_write_summary or {}).get("end")
+        if first_read_start is None or last_write_end is None:
+            self.log_violation(
+                "4.7.3", "checkpointRemappingTimeReporting", self.path,
+                "cannot verify remap interval: missing timestamps in summary.json",
+            )
+            return False
+        try:
+            observed_remap = _parse_iso_gap(last_write_end, first_read_start)
+        except (ValueError, TypeError):
+            return valid   # CHKPT-03 will emit the parse violation
+        if observed_remap < declared * 0.5:
+            self.log_violation(
+                "4.7.3", "checkpointRemappingTimeReporting", self.path,
+                "observed remap interval (%.1fs) is much less than declared remap_time_in_seconds (%ds)",
+                observed_remap, declared,
+            )
+            valid = False
+        return valid
+
+    @rule("4.7.4", "checkpointSimultaneousRwSupport")
+    def simultaneous_rw_support(self):
+        """Verify declared simultaneous R/W capabilities are consistent with run data.
+        (Rules.md 4.7.4)
+
+        Schema validation (SystemYamlSchemaCheck, Plan 02-02) covers field presence +
+        type + Rule-13 cross-field consistency per D-A3. This runtime cross-check is
+        DEFERRED (TODO-002) — current summary.json does not expose per-host timing,
+        which is required to determine whether write/read overlapped on the same host.
+        Method emits an informational log.info noting that schema-validation owns
+        the rule for Phase 2 and returns True. The deferred state is pinned by
+        TestChkpt05DeferredFollowUp in Plan 02-04.
+        """
+        valid = True
+        if self.mode != "checkpointing":
+            return valid
+        sim_write = self._get_capability("simultaneous_write")
+        sim_read = self._get_capability("simultaneous_read")
+        if sim_write is None or sim_read is None:
+            return valid
+        self.log.info(
+            "[4.7.4 checkpointSimultaneousRwSupport] %s: "
+            "schema validation (SystemYamlSchemaCheck) covers Rules.md 4.7.4 "
+            "structural requirements; runtime per-host cross-check awaits "
+            "richer summary.json data — see TODO-002 "
+            "(simultaneous_write=%s, simultaneous_read=%s)",
+            self.path, sim_write, sim_read,
+        )
+        return valid
+
+    @rule("4.4.2", "checkpointFilesystemCheck")
+    def checkpoint_filesystem_check(self):
+        """Verify checkpoint_folder and results_dir are on different filesystems.
+        (Rules.md 4.4.2 — Phase 2 NEW requirement CHKPT-06)
+
+        Analog of TRAIN-02 for checkpointing. Per D-B5, shares
+        _check_filesystem_separation helper. Per D-B7, silent-passes when
+        benchmark_API == 'object'. Per D-B4, 'df output not found' is itself a
+        violation tagged with this rule ID.
+        """
+        valid = True
+        if self.mode != "checkpointing":
+            return valid
+        if self._get_benchmark_api() == "object":
+            return valid
+        for summary, metadata, timestamp in self.submissions_logs:
+            logfile_path = os.path.join(self.checkpointing_path, timestamp, "checkpointing_run.stdout.log")
+            args = metadata.get("args", {})
+            # For checkpointing, checkpoint_folder is the "data path" analog (RESEARCH.md).
+            chkpt_args = {
+                "data_dir": args.get("checkpoint_folder"),
+                "results_dir": args.get("results_dir"),
+            }
+            ok, df_found = _check_filesystem_separation(chkpt_args, logfile_path)
+            if not df_found:
+                self.log_violation(
+                    "4.4.2", "checkpointFilesystemCheck", logfile_path,
+                    "df output not found",
+                )
+                valid = False
+                continue
+            if not ok:
+                self.log_violation(
+                    "4.4.2", "checkpointFilesystemCheck", logfile_path,
+                    "checkpoint_folder and results_dir are on the same filesystem",
+                )
+                valid = False
         return valid

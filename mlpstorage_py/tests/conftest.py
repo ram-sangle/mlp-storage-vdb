@@ -116,14 +116,26 @@ _DEFAULT_SUMMARY = {
 
 
 def _build_system_yaml(submission_name: str, multi_host: bool = True) -> dict:
-    """Build a schema-valid system YAML dict for the given submission_name."""
+    """Build a schema-valid system YAML dict for the given submission_name.
+
+    Uses ``deployment: cloud`` + ``storage_location: local`` to minimise
+    required fields (cloud drops rack_units/power requirements; local drops
+    the networking requirement on nodes).  Both are valid ``DeploymentMode``
+    and ``StorageLocation`` enum values in schema_validator.py.
+
+    Bug fix (Phase 2 Plan 02-02): the original dict used ``power_capacity_watts``
+    (not a valid ``PowerSupply`` field) and omitted the required ``inlet_voltage``
+    and ``nameplate_power_watts`` fields.  Also, ``deployment: onprem`` requires
+    ``total_rack_units`` and ``rack_units`` / ``power`` on all nodes; switching to
+    ``cloud`` removes those requirements and keeps the fixture minimal.
+    """
     return {
         "system_under_test": {
             "solution": {
                 "submission_name": submission_name,
                 "friendly_description": "Test NAS system",
                 "architecture": {
-                    "storage_location": "remote",
+                    "storage_location": "local",
                     "benchmark_API": "file",
                     "product_API": "file",
                     "client_footprint": "open_source",
@@ -136,28 +148,17 @@ def _build_system_yaml(submission_name: str, multi_host: bool = True) -> dict:
                     "remap_time_in_seconds": 0,
                 },
             },
-            "deployment": "onprem",
+            "deployment": "cloud",
             "clients": [
                 {
                     "friendly_description": "Benchmark client",
                     "quantity": 2,
                     "chassis": {
                         "model_name": "TestServer-A",
-                        "rack_units": 2,
                         "cpu_model": "Xeon Gold 6338",
                         "cpu_qty": 2,
                         "cpu_cores": 64,
                         "memory_capacity": 256,
-                        "power": {
-                            "min_psus_active": 1,
-                            "psus_configured": [
-                                {
-                                    "power_capacity_watts": 800,
-                                    "efficiency": "Platinum",
-                                    "unit_count": 2,
-                                }
-                            ],
-                        },
                     },
                     "operating_system": {
                         "name": "RHEL",
@@ -239,6 +240,20 @@ def build_submission(tmp_path, **overrides) -> Path:
     * ``datagen_timestamps`` (int)          — overrides datagen timestamp count
     * ``bad_datagen_timestamp_format`` (bool) — uses non-timestamp datagen dir name
     * ``wrong_checkpointing_workload`` (str) — adds invalid checkpointing workload
+    * ``system_yaml_bad_capabilities`` (dict | None) — Phase 2: perturb capabilities
+      block.  Dict keys overwrite matching capability fields; special key
+      ``"remove"`` is a list of field names to drop (→ missing-required-field
+      schema error); ``"add"`` is a dict of extra key/values to inject.
+    * ``system_yaml_rule13_violation`` (bool) — Phase 2: set capabilities to
+      ``simultaneous_write=True, simultaneous_read=True, remap_time_in_seconds=5``
+      (Rule-13 cross-field violation, triggers CHKPT-04 schema error tagged
+      ``[4.7.3 checkpointRemappingTimeReporting]``).
+    * ``system_yaml_bad_deployment`` (int | str | None) — Phase 2 Resolution A:
+      set ``system_under_test.deployment`` to a non-``DeploymentMode`` value (e.g.
+      integer ``12345``).  Pydantic v2 emits a ValidationError at loc
+      ``"system_under_test -> deployment"`` which is NOT in ``SCHEMA_ERROR_RULE_MAP``,
+      so the violation falls through to the ``("2.1.7", "systemsDirectoryFiles")``
+      default (D-A2 fallback test driver).
     """
     # -----------------------------------------------------------------------
     # Pop all known overrides before the sealed-enum guard runs
@@ -271,6 +286,10 @@ def build_submission(tmp_path, **overrides) -> Path:
     datagen_timestamps_count = overrides.pop("datagen_timestamps", None)
     bad_datagen_timestamp_format = overrides.pop("bad_datagen_timestamp_format", False)
     wrong_checkpointing_workload = overrides.pop("wrong_checkpointing_workload", None)
+    # Phase 2 Plan 02-02: system YAML mutation kwargs for SystemYamlSchemaCheck tests.
+    system_yaml_bad_capabilities = overrides.pop("system_yaml_bad_capabilities", None)
+    system_yaml_rule13_violation = overrides.pop("system_yaml_rule13_violation", False)
+    system_yaml_bad_deployment = overrides.pop("system_yaml_bad_deployment", None)
 
     # Sealed-enum guard — any leftover key is unknown
     if overrides:
@@ -369,6 +388,35 @@ def build_submission(tmp_path, **overrides) -> Path:
                 yaml_submission_name,
                 multi_host=multi_host_val,
             )
+
+            # Phase 2 Plan 02-02: apply system_yaml_* mutation kwargs.
+            if system_yaml_rule13_violation:
+                # Trigger Capabilities.check_remap_time (Rule 13):
+                # both simultaneous flags True + non-zero remap_time.
+                caps = sys_yaml_dict["system_under_test"]["solution"]["capabilities"]
+                caps["simultaneous_write"] = True
+                caps["simultaneous_read"] = True
+                caps["remap_time_in_seconds"] = 5
+
+            if system_yaml_bad_capabilities is not None:
+                caps = sys_yaml_dict["system_under_test"]["solution"]["capabilities"]
+                # "remove" → list of capability keys to drop (missing-required-field)
+                for key in system_yaml_bad_capabilities.get("remove", []):
+                    caps.pop(key, None)
+                # "add" → dict of extra keys to inject
+                for key, val in system_yaml_bad_capabilities.get("add", {}).items():
+                    caps[key] = val
+                # All other keys → overwrite the matching capability field value
+                for key, val in system_yaml_bad_capabilities.items():
+                    if key not in ("remove", "add"):
+                        caps[key] = val
+
+            if system_yaml_bad_deployment is not None:
+                # Resolution A: set deployment to a non-DeploymentMode value so Pydantic
+                # emits a ValidationError at loc "system_under_test -> deployment"
+                # (which is NOT in SCHEMA_ERROR_RULE_MAP → fallback 2.1.7).
+                sys_yaml_dict["system_under_test"]["deployment"] = system_yaml_bad_deployment
+
             yaml_content = yaml.dump(sys_yaml_dict, default_flow_style=False)
 
             if not unpaired_yaml:

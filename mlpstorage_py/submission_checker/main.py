@@ -16,6 +16,7 @@ from .loader import Loader
 from .checks.checkpointing_checks import CheckpointingCheck
 from .checks.directory_checks import DirectoryCheck
 from .checks.submission_structure_checks import SubmissionStructureCheck
+from .checks.system_yaml_schema_checks import SystemYamlSchemaCheck
 from .checks.training_checks import TrainingCheck
 
 
@@ -98,6 +99,14 @@ def main():
     # NOT short-circuit the loop — every benchmark still gets its own checks.
     structure_check = SubmissionStructureCheck(log, config, args.input)
     if not structure_check():
+        errors.append(args.input)
+
+    # Per Phase 2 D-A1: schema-validate every systems/<name>.yaml ONCE before
+    # the per-benchmark loader loop. Runs after SubmissionStructureCheck and
+    # before the for-loop so schema errors surface once per YAML (not once per
+    # workload). Failures accumulated into `errors` but do NOT abort the loop.
+    schema_check = SystemYamlSchemaCheck(log, config, args.input)
+    if not schema_check():
         errors.append(args.input)
 
     # Main loop over all the submissions

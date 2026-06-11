@@ -83,7 +83,13 @@ class TrainingCheck(BaseCheck):
         if self.mode != "training":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if metadata is None:
+                self.log.debug(
+                    "[3.1.1] %s/%s: skipping (metadata not loaded)",
+                    self.path, ts,
+                )
+                continue
             # Check if datasize-related parameters are in the metadata
             params = metadata.get("args", {})
             combined_params = metadata.get("combined_params", {})
@@ -204,6 +210,8 @@ class TrainingCheck(BaseCheck):
         # Get expected size from run
         expected_size = None
         for summary, metadata, _ in self.submissions_logs.run_files:
+            if metadata is None:
+                continue
             dataset_params = metadata.get("combined_params", {}).get("dataset", {})
             num_files = int(dataset_params.get("num_files_train", 0))
             record_length = float(dataset_params.get("record_length_bytes", 0))
@@ -213,6 +221,8 @@ class TrainingCheck(BaseCheck):
 
         # Check datagen produced at least that much
         for summary, metadata, _ in self.submissions_logs.datagen_files:
+            if metadata is None:
+                continue
             dataset_params = metadata.get("combined_params", {}).get("dataset", {})
             num_files = int(dataset_params.get("num_files_train", 0))
             record_length = float(dataset_params.get("record_length_bytes", 0))
@@ -508,7 +518,13 @@ class TrainingCheck(BaseCheck):
             "storage.storage_type"
         }
 
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if metadata is None:
+                self.log.debug(
+                    "[3.6.2] %s/%s: skipping (metadata not loaded)",
+                    self.path, ts,
+                )
+                continue
             verification = metadata.get("verification", "open")
 
             if verification == "closed":
@@ -559,7 +575,13 @@ class TrainingCheck(BaseCheck):
 
         allowed_params = closed_params | open_allowed_params
 
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if metadata is None:
+                self.log.debug(
+                    "[3.6.3] %s/%s: skipping (metadata not loaded)",
+                    self.path, ts,
+                )
+                continue
             verification = metadata.get("verification", "open")
 
             if verification == "open":
@@ -589,7 +611,13 @@ class TrainingCheck(BaseCheck):
         if self.mode != "training":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if metadata is None:
+                self.log.debug(
+                    "[3.4.1] %s/%s: skipping (metadata not loaded)",
+                    self.path, ts,
+                )
+                continue
             args = metadata.get("args", {})
             data_dir = args.get("data_dir")
             results_dir = args.get("results_dir")
@@ -638,6 +666,12 @@ class TrainingCheck(BaseCheck):
             return valid
 
         for summary, metadata, timestamp in self.submissions_logs.run_files:
+            if metadata is None:
+                self.log.debug(
+                    "[3.4.2] %s/%s: skipping (metadata not loaded)",
+                    self.path, timestamp,
+                )
+                continue
             logfile_path = os.path.join(self.run_path, timestamp, "training_run.stdout.log")
             args = metadata.get("args", {})
             ok, df_found = _check_filesystem_separation(args, logfile_path)

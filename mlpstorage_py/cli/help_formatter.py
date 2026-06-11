@@ -20,6 +20,8 @@ HELP_ALL_TEXT = """\
 SYNOPSIS
   mlpstorage <closed|open|whatif> <benchmark> <model|algorithm> <command> <file|object> [OPTIONS]
   mlpstorage (reports|history|lockfile|version) [subcommand] [OPTIONS]
+  mlpstorage validate <submission-dir> [OPTIONS]
+  mlpstorage rules-coverage [--rules-md PATH]
 
   <closed|open|whatif>  — required first positional for benchmark commands
   <model|algorithm>     — required second positional (see per-benchmark choices below)
@@ -112,6 +114,16 @@ mlpstorage
 ├── lockfile
 │   ├── generate                                 {LF_GENERATE}
 │   └── verify                                   {LF_VERIFY}
+│
+├── validate <submission-dir>                    Run the Rules.md submission checker
+│       --submitters CSV                          Comma-separated submitter allowlist (default: all)
+│       --mlperf-version VERSION                  Spec version (default: v5.1)
+│       --csv PATH                                Summary CSV path (default: summary.csv)
+│       --skip-output-file                        Suppress per-submission output file
+│       --reference-checksum MD5                  Override REFERENCE_CHECKSUMS for code/ MD5 check
+│
+├── rules-coverage                               Reconcile Rules.md IDs against @rule-decorated checks
+│       --rules-md PATH                           Path to Rules.md (default: project-root Rules.md)
 │
 └── version                                      {VERSION}
 
@@ -577,7 +589,7 @@ def get_context_help_tokens(argv: list) -> 'str | None':
 
     # Root — no tokens
     if n == 0:
-        return 'next: closed | open | whatif | reports | history | lockfile | version'
+        return 'next: closed | open | whatif | reports | history | lockfile | version | validate | rules-coverage'
 
     t0 = argv[0]
 
@@ -598,6 +610,12 @@ def get_context_help_tokens(argv: list) -> 'str | None':
         return None  # leaf
 
     if t0 == 'version':
+        return None  # leaf — fall through to argparse
+
+    if t0 == 'validate':
+        return None  # leaf — fall through to argparse (positional <input> required)
+
+    if t0 == 'rules-coverage':
         return None  # leaf — fall through to argparse
 
     # ── Three-mode benchmark branch ──────────────────────────────────────────

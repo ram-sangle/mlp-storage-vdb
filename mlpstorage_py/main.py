@@ -313,6 +313,14 @@ def _main_impl():
         report_generator = ReportGenerator(results_dir, args, logger=logger)
         return report_generator.generate_reports()
 
+    if args.mode == "validate":
+        from mlpstorage_py.submission_checker.main import run as run_submission_checker
+        return run_submission_checker(args)
+
+    if args.mode == "rules-coverage":
+        from mlpstorage_py.submission_checker.tools.rules_coverage import run as run_rules_coverage
+        return run_rules_coverage(args)
+
     run_datetime = datetime_str
 
     # Handle vdb end conditions, num_process standardization, and args.params flattening

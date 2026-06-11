@@ -301,6 +301,12 @@ class DirectoryCheck(BaseCheck):
         max_gap = float("inf")
         time_factor = 2
         for run_dict, _, timestamp_dir in self.submissions_logs.run_files:
+            if run_dict is None:
+                # Missing summary.json — reported under rule 2.1.19 (runFiles)
+                # by SubmissionStructureCheck; skip silently to avoid the
+                # misleading "Failed to parse timestamp data: 'NoneType'
+                # object is not subscriptable" double-diagnostic.
+                continue
             try:
                 # Parse timestamps from run_dict
                 start_time = datetime.fromisoformat(run_dict["start"])

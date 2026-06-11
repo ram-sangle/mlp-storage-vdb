@@ -406,10 +406,27 @@ def main() -> int:
     Returns:
         0 if every live Rules.md ID has a disposition (drift warnings
         for stale registry entries do not change exit code); 1 if any
-        live ID is unmapped (success criterion #1 second clause).
+        live ID is unmapped (success criterion #1 second clause); 2 if
+        the Rules.md file does not exist (per WR-11, review 2026-06-10
+        — a missing Rules.md means coverage cannot be verified, which
+        must be a hard failure rather than a silent exit 0).
     """
     args = get_args()
-    result = reconcile(rules_md_path=args.rules_md)
+    # WR-11: hard-fail when Rules.md is absent. The previous behavior
+    # delegated to ``_enumerate_rules_md`` which logged an error and
+    # returned an empty list — that produced an unmapped set of size 0
+    # and exit 0, masking the missing-file failure mode (e.g. when the
+    # CLI is invoked from an installed wheel where ``parents[3]`` does
+    # not resolve to a Rules.md location).
+    rules_md_path = args.rules_md or _default_rules_md_path()
+    if not Path(rules_md_path).is_file():
+        log.error(
+            "Rules.md not found at %s; cannot verify coverage. Pass "
+            "--rules-md <path> to override the default location.",
+            rules_md_path,
+        )
+        return 2
+    result = reconcile(rules_md_path=rules_md_path)
     _print_table(result["rows"])
 
     if result["unmapped"]:

@@ -31,6 +31,30 @@ logging.basicConfig(
 )
 log = logging.getLogger("main")
 
+# Per CR-02 (review 2026-06-10): the checker list is mode-routed so that each
+# per-mode Check class only runs against submissions whose loader mode matches.
+# The previous flat list ran every checker against every submission. That was
+# benign while VdbCheck/KVCacheCheck were no-op stubs, but locked in a
+# regression for the next contributor — the first real @rule-decorated method
+# added to VdbCheck would fire against training/checkpointing submissions and
+# emit a §5 rule_id bound to the wrong submission. Gating at the loop keeps
+# the stubs (and any future real checks) on the right submissions without each
+# rule method needing to guard with `if self.mode != ...`.
+#
+# Per WR-01 iter-2 (review 2026-06-10): hoisted to module scope (was inside
+# main()) for discoverability — contributors adding a new mode now find this
+# at the same scope as the loader's `for mode in list_dir(...)` walk and the
+# rules_coverage tool's check-class list, rather than buried in a function
+# closure. Module scope also enables test-time monkeypatch.setattr(
+# "...main.MODE_TO_CHECKERS", {...}) injection of mock checkers, mirroring
+# the STUB_COVERAGE/OUT_OF_SCOPE_RULES pattern in test_rules_coverage.py.
+MODE_TO_CHECKERS = {
+    "training":      [DirectoryCheck, TrainingCheck],
+    "checkpointing": [DirectoryCheck, CheckpointingCheck],
+    "vectordb":      [VdbCheck],
+    "kvcache":       [KVCacheCheck],
+}
+
 def get_args():
     """Parse command-line arguments for the submission checker.
 
@@ -111,23 +135,6 @@ def main():
     results = {}
     systems = {}
     errors = []
-
-    # Per CR-02 (review 2026-06-10): the checker list is mode-routed so that
-    # each per-mode Check class only runs against submissions whose loader
-    # mode matches. The previous flat list ran every checker against every
-    # submission. That was benign while VdbCheck/KVCacheCheck were no-op
-    # stubs, but locked in a regression for the next contributor — the first
-    # real @rule-decorated method added to VdbCheck would fire against
-    # training/checkpointing submissions and emit a §5 rule_id bound to the
-    # wrong submission. Gating at the loop keeps the stubs (and any future
-    # real checks) on the right submissions without each rule method needing
-    # to guard with `if self.mode != ...`.
-    MODE_TO_CHECKERS = {
-        "training":      [DirectoryCheck, TrainingCheck],
-        "checkpointing": [DirectoryCheck, CheckpointingCheck],
-        "vectordb":      [VdbCheck],
-        "kvcache":       [KVCacheCheck],
-    }
 
     # Per PLAN.md 01-03 D-02: run structural hierarchy checks ONCE before the
     # per-benchmark loader loop. Failures are accumulated into `errors` but do

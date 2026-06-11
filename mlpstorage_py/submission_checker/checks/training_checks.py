@@ -119,7 +119,16 @@ class TrainingCheck(BaseCheck):
         HOST_MEMORY_MULTIPLIER = 5
         MIN_STEPS_PER_EPOCH = 500
 
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            # Missing summary.json / metadata.json is already reported under
+            # rule 2.1.19 (runFiles) by SubmissionStructureCheck; skip the
+            # cross-check rather than re-fire or crash with AttributeError.
+            if summary is None or metadata is None:
+                self.log.debug(
+                    "[3.1.2] %s/%s: skipping (summary or metadata not loaded)",
+                    self.path, ts,
+                )
+                continue
             try:
                 # Get parameters
                 combined_params = metadata.get("combined_params", {})
@@ -251,7 +260,14 @@ class TrainingCheck(BaseCheck):
             )
             return valid
 
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if summary is None:
+                self.log.debug(
+                    "[3.3.1] %s/%s: skipping (summary not loaded; "
+                    "missing summary.json reported under 2.1.19)",
+                    self.path, ts,
+                )
+                continue
             num_files_train = summary.get("num_files_train", None)
             num_files_eval = summary.get("num_files_eval", None)
 
@@ -292,7 +308,13 @@ class TrainingCheck(BaseCheck):
         valid = True
         if self.mode != "training":
             return valid
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if summary is None:
+                self.log.debug(
+                    "[3.3.2] %s/%s: skipping (summary not loaded)",
+                    self.path, ts,
+                )
+                continue
             metrics = summary.get("metric", {})
             au_mean = metrics.get("train_au_mean_percentage", 0)
             au_expectation = metrics.get("train_au_meet_expectation", "")
@@ -321,7 +343,13 @@ class TrainingCheck(BaseCheck):
         valid = True
         if self.mode != "training":
             return valid
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if summary is None:
+                self.log.debug(
+                    "[3.3.3] %s/%s: skipping (summary not loaded)",
+                    self.path, ts,
+                )
+                continue
             num_hosts = summary.get("num_hosts", 1)
             num_accelerators = summary.get("num_accelerators", 1)
 
@@ -367,7 +395,13 @@ class TrainingCheck(BaseCheck):
         valid = True
         if self.mode != "training":
             return valid
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if summary is None or metadata is None:
+                self.log.debug(
+                    "[3.3.4] %s/%s: skipping (summary or metadata not loaded)",
+                    self.path, ts,
+                )
+                continue
             num_hosts = summary.get("num_hosts", 1)
             if num_hosts == 1:
                 args = metadata.get("args", {})
@@ -391,7 +425,13 @@ class TrainingCheck(BaseCheck):
         if self.mode != "training":
             return valid
 
-        for summary, metadata, _ in self.submissions_logs.run_files:
+        for summary, metadata, ts in self.submissions_logs.run_files:
+            if summary is None:
+                self.log.debug(
+                    "[3.3.6] %s/%s: skipping (summary not loaded)",
+                    self.path, ts,
+                )
+                continue
             num_hosts = summary.get("num_hosts", 1)
             num_accelerators = summary.get("num_accelerators", 1)
 

@@ -191,6 +191,21 @@ class TestStruct02_TopLevelSubdirectories:
         assert result is False
         assert any("[2.1.2 topLevelSubdirectories]" in m for m in mock_logger.errors)
 
+    def test_dot_prefixed_top_level_entries_are_ignored(self, tmp_path, mock_logger):
+        """Merged reviewer trees are typically git working trees. Dot-prefixed
+        entries (.git/, .github/, .gitignore) must not fire 2.1.2 violations.
+        """
+        from mlpstorage_py.tests.conftest import build_submission
+        root = build_submission(tmp_path)
+        os.makedirs(os.path.join(root, ".git", "refs"))
+        os.makedirs(os.path.join(root, ".github", "workflows"))
+        with open(os.path.join(root, ".gitignore"), "w") as f:
+            f.write("*.pyc\n")
+        check = _make_check(root, mock_logger)
+        result = run_one_check(check, "top_level_subdirectories_check", mock_logger)
+        assert result is True
+        assert not any("[2.1.2 topLevelSubdirectories]" in m for m in mock_logger.errors)
+
 
 # ---------------------------------------------------------------------------
 # TestStruct03_OpenMatchesClosed  (STRUCT-03, rule 2.1.3)
@@ -327,6 +342,45 @@ class TestStruct05_RequiredSubdirectories:
         assert result is False
         assert any("[2.1.5 requiredSubdirectories]" in m for m in mock_logger.errors)
 
+    def test_dotfile_at_submitter_level_is_ignored(self, tmp_path, mock_logger):
+        """Dot-prefixed entries (.DS_Store, .cache/) under closed/<submitter>/
+        must not trip the 'unexpected subdirectory' branch."""
+        from mlpstorage_py.tests.conftest import build_submission
+        root = build_submission(tmp_path)
+        with open(os.path.join(root, "closed", "Acme", ".DS_Store"), "w") as f:
+            f.write("")
+        os.makedirs(os.path.join(root, "closed", "Acme", ".cache"))
+        check = _make_check(root, mock_logger)
+        result = run_one_check(check, "required_subdirectories_check", mock_logger)
+        assert result is True
+        assert mock_logger.errors == []
+
+    def test_wrapping_hint_when_submission_nested_one_level_deep(self, tmp_path, mock_logger):
+        """Common v2.0 submitter mistake: closed/<submitter>/benchmarks/{code,
+        results, systems}/ instead of closed/<submitter>/{code, results,
+        systems}/. The diagnostic for the extra wrapper dir should explicitly
+        name the wrapping so the submitter knows what to fix.
+        """
+        from mlpstorage_py.tests.conftest import build_submission
+        root = build_submission(tmp_path, missing_required_subdir="code")
+        # Now build the wrapping: move code/results/systems INTO benchmarks/
+        # at the submitter level so the wrapping detection has something to find.
+        sub_path = os.path.join(root, "closed", "Acme")
+        wrapper = os.path.join(sub_path, "benchmarks")
+        os.makedirs(wrapper)
+        os.makedirs(os.path.join(wrapper, "code"))
+        os.makedirs(os.path.join(wrapper, "results"))
+        os.makedirs(os.path.join(wrapper, "systems"))
+        check = _make_check(root, mock_logger)
+        result = run_one_check(check, "required_subdirectories_check", mock_logger)
+        assert result is False
+        wrapping_msgs = [
+            m for m in mock_logger.errors
+            if "[2.1.5 requiredSubdirectories]" in m
+            and "nested one level deeper than expected" in m
+        ]
+        assert len(wrapping_msgs) == 1, mock_logger.errors
+
 
 # ---------------------------------------------------------------------------
 # TestStruct06_CodeDirectoryContents  (STRUCT-06, rule 2.1.6)
@@ -335,14 +389,26 @@ class TestStruct05_RequiredSubdirectories:
 class TestStruct06_CodeDirectoryContents:
 
     def test_default_fixture_passes_with_unset_reference(self, tmp_path, mock_logger):
-        """No reference checksum → warn and return True (D-12)."""
+        """No reference checksum → warn ONCE (not per-submitter) and return True (D-12)."""
         from mlpstorage_py.tests.conftest import build_submission
         root = build_submission(tmp_path)
         check = _make_check(root, mock_logger)  # no ref_checksum
         result = run_one_check(check, "code_directory_contents_check", mock_logger)
         assert result is True
-        assert any("[2.1.6 codeDirectoryContents]" in w for w in mock_logger.warnings)
+        warnings = [w for w in mock_logger.warnings if "[2.1.6 codeDirectoryContents]" in w]
+        assert len(warnings) == 1, warnings
         assert mock_logger.errors == []
+
+    def test_unset_reference_emits_single_warning_for_multi_submitter_tree(self, tmp_path, mock_logger):
+        """Regression for pre-fix per-submitter warning spam: 5-submitter merged
+        tree must emit exactly one no-checksum warning, not five."""
+        from mlpstorage_py.tests.conftest import build_submission
+        root = build_submission(tmp_path, multiple_submitters_in_closed=True)
+        check = _make_check(root, mock_logger)  # no ref_checksum
+        result = run_one_check(check, "code_directory_contents_check", mock_logger)
+        assert result is True
+        warnings = [w for w in mock_logger.warnings if "[2.1.6 codeDirectoryContents]" in w]
+        assert len(warnings) == 1, warnings
 
     def test_reference_checksum_mismatch_fails(self, tmp_path, mock_logger):
         """Deliberate mismatch: zeros as reference → check fails."""
@@ -426,6 +492,34 @@ class TestStruct07_SystemsDirectoryFiles:
         result = run_one_check(check, "systems_directory_files_check", mock_logger)
         assert result is False
         assert any("[2.1.7 systemsDirectoryFiles]" in m for m in mock_logger.errors)
+
+    def test_md_files_in_systems_are_allowed(self, tmp_path, mock_logger):
+        """Markdown documentation files (*.md) are permitted alongside the
+        per-system .yaml/.pdf pairs (Rules.md 2.1.7)."""
+        from mlpstorage_py.tests.conftest import build_submission
+        root = build_submission(tmp_path)
+        systems_path = os.path.join(root, "closed", "Acme", "systems")
+        for name in ("README.md", "NOTES.md", "system-notes.md"):
+            with open(os.path.join(systems_path, name), "w") as f:
+                f.write("# documentation\n")
+        check = _make_check(root, mock_logger)
+        result = run_one_check(check, "systems_directory_files_check", mock_logger)
+        assert result is True
+        assert mock_logger.errors == []
+
+    def test_dotfiles_in_systems_are_ignored(self, tmp_path, mock_logger):
+        """Dot-prefixed entries in systems/ (.DS_Store, .gitkeep) must not fire
+        violations — they're never the submitter's intended content."""
+        from mlpstorage_py.tests.conftest import build_submission
+        root = build_submission(tmp_path)
+        systems_path = os.path.join(root, "closed", "Acme", "systems")
+        for name in (".DS_Store", ".gitkeep"):
+            with open(os.path.join(systems_path, name), "w") as f:
+                f.write("")
+        check = _make_check(root, mock_logger)
+        result = run_one_check(check, "systems_directory_files_check", mock_logger)
+        assert result is True
+        assert mock_logger.errors == []
 
 
 # ---------------------------------------------------------------------------

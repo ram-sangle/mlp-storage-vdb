@@ -154,9 +154,13 @@ class SubmissionStructureCheck(BaseCheck):
         """STRUCT-02: top-level dirs must be a non-empty subset of {closed, open}.
 
         Case-sensitive set check — no .lower() (PITFALLS.md #2).
+
+        Dot-prefixed entries (.git/, .github/, .gitignore, .DS_Store, etc.)
+        are silently skipped: merged reviewer trees are typically git working
+        trees, and version-control / CI metadata is never submission content.
         """
         valid = True
-        top_dirs = set(list_dir(self.root_path))
+        top_dirs = {e for e in list_dir(self.root_path) if not e.startswith(".")}
 
         # Check for any unrecognised top-level dirs
         unexpected = top_dirs - _VALID_DIVISIONS
@@ -251,10 +255,20 @@ class SubmissionStructureCheck(BaseCheck):
 
     @rule("2.1.5", "requiredSubdirectories")
     def required_subdirectories_check(self):
-        """STRUCT-05: submitter dir must contain EXACTLY {code, results, systems}."""
+        """STRUCT-05: submitter dir must contain EXACTLY {code, results, systems}.
+
+        Dot-prefixed entries are silently skipped (e.g. .DS_Store, .cache/).
+
+        When an unexpected subdirectory itself contains some of {code, results,
+        systems}, the diagnostic includes a wrapping hint — this catches the
+        common v2.0 submitter mistake of nesting the package one level deeper
+        than the spec requires (e.g. closed/<submitter>/benchmarks/{code,
+        results, systems}/ instead of closed/<submitter>/{code, results,
+        systems}/).
+        """
         valid = True
         for division, submitter, sub_path in self._iter_submitter_dirs():
-            actual = set(list_dir(sub_path))
+            actual = {e for e in list_dir(sub_path) if not e.startswith(".")}
             missing = _REQUIRED_SUBMITTER_SUBDIRS - actual
             extra = actual - _REQUIRED_SUBMITTER_SUBDIRS
 
@@ -268,11 +282,26 @@ class SubmissionStructureCheck(BaseCheck):
                 valid = False
 
             for e in sorted(extra):
+                extra_path = os.path.join(sub_path, e)
+                hint = ""
+                if os.path.isdir(extra_path):
+                    nested = {
+                        n for n in list_dir(extra_path) if not n.startswith(".")
+                    }
+                    wrapped = sorted(nested & _REQUIRED_SUBMITTER_SUBDIRS)
+                    if wrapped:
+                        hint = (
+                            "; the submission appears to be nested one level "
+                            "deeper than expected — found %s inside, expected "
+                            "directly under %s/%s/"
+                            % (wrapped, division, submitter)
+                        )
                 self.log_violation(
                     "2.1.5", "requiredSubdirectories",
-                    os.path.join(sub_path, e),
-                    "unexpected subdirectory %r in %s/%s (only code/results/systems allowed)",
-                    e, division, submitter,
+                    extra_path,
+                    "unexpected subdirectory %r in %s/%s "
+                    "(only code/results/systems allowed)%s",
+                    e, division, submitter, hint,
                 )
                 valid = False
 
@@ -287,28 +316,31 @@ class SubmissionStructureCheck(BaseCheck):
         """STRUCT-06: for CLOSED submissions, verify code/ tree MD5.
 
         Per D-12: when reference checksum is None, emit WARNING and return
-        True (does not fail the run).
+        True (does not fail the run). The no-checksum warning is hoisted out
+        of the per-submitter loop so an unconfigured invocation emits one
+        warning per run rather than one per submitter (which would spam the
+        report against N-submitter merged trees).
         """
         valid = True
         closed_path = os.path.join(self.root_path, "closed")
         if not os.path.isdir(closed_path):
             return valid  # no closed/ — nothing to check
 
+        expected = self.config.get_reference_checksum()
+        if expected is None:
+            self.warn_violation(
+                "2.1.6", "codeDirectoryContents",
+                closed_path,
+                "reference checksum not configured "
+                "(use --reference-checksum or populate REFERENCE_CHECKSUMS); "
+                "the code/ subtree cannot be validated without one",
+            )
+            return valid  # not a failure (D-12 preserved); skip per-submitter walk
+
         for submitter in list_dir(closed_path):
             code_path = os.path.join(closed_path, submitter, "code")
             if not os.path.isdir(code_path):
                 continue  # STRUCT-05 will catch missing code/
-
-            expected = self.config.get_reference_checksum()
-            if expected is None:
-                self.warn_violation(
-                    "2.1.6", "codeDirectoryContents",
-                    code_path,
-                    "reference checksum not configured "
-                    "(use --reference-checksum or populate REFERENCE_CHECKSUMS)",
-                )
-                # Do NOT set valid = False — unpinned is not a failure (D-12)
-                continue
 
             digest = compute_code_tree_md5(code_path, self.log)
             if digest != expected:
@@ -328,17 +360,23 @@ class SubmissionStructureCheck(BaseCheck):
 
     @rule("2.1.7", "systemsDirectoryFiles")
     def systems_directory_files_check(self):
-        """STRUCT-07: systems/ must contain only paired <name>.yaml + <name>.pdf."""
+        """STRUCT-07: systems/ must contain only paired <name>.yaml + <name>.pdf.
+
+        Markdown files (*.md) are allowed for supplementary documentation
+        (Rules.md 2.1.7). Dot-prefixed entries (.DS_Store, .gitkeep, etc.)
+        are silently skipped.
+        """
         valid = True
         for _division, _submitter, sub_path in self._iter_submitter_dirs():
             systems_path = os.path.join(sub_path, "systems")
             if not os.path.isdir(systems_path):
                 continue
 
-            # Collect all files in systems/ (list_files returns sorted list)
-            all_files = list_files(systems_path)
-            # Also check for directories
-            all_dirs = list_dir(systems_path)
+            # Collect non-dotfile entries only (list_files / list_dir don't
+            # filter dotfiles themselves; .DS_Store etc. would otherwise be
+            # flagged as unexpected by the others loop below).
+            all_files = [f for f in list_files(systems_path) if not f.startswith(".")]
+            all_dirs = [d for d in list_dir(systems_path) if not d.startswith(".")]
 
             for d in all_dirs:
                 self.log_violation(
@@ -357,6 +395,9 @@ class SubmissionStructureCheck(BaseCheck):
                     yamls.add(f[:-5])  # stem
                 elif f.endswith(".pdf"):
                     pdfs.add(f[:-4])   # stem
+                elif f.endswith(".md"):
+                    # Markdown documentation files are permitted by 2.1.7.
+                    continue
                 else:
                     others.append(f)
 
@@ -365,7 +406,8 @@ class SubmissionStructureCheck(BaseCheck):
                 self.log_violation(
                     "2.1.7", "systemsDirectoryFiles",
                     os.path.join(systems_path, f),
-                    "unexpected file %r in systems/ (only <name>.yaml and <name>.pdf allowed)",
+                    "unexpected file %r in systems/ "
+                    "(only <name>.yaml, <name>.pdf, and *.md allowed)",
                     f,
                 )
                 valid = False

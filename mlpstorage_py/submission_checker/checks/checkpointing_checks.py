@@ -88,79 +88,95 @@ class CheckpointingCheck(BaseCheck):
                             .get(field)
         )
     
+    @rule("4.3.1", "checkpointDataSizeRatio")
     def checkpoint_data_size_ratio(self):
         """
         Verify that checkpoint data written per node > 3x node memory.
+        (Rules.md 4.3.1)
+
+        Per Plan 03-02 PATTERNS.md: Rules.md 4.3.1 is advisory ("filesystem cache
+        needs to be cleared"), not a hard violation. The advisory uses
+        ``self.warn_violation`` (warning level) rather than ``self.log_violation``
+        (error level) to preserve the original ``self.log.warning`` semantics.
         """
         valid = True
         if self.mode != "checkpointing":
             return valid
-        
+
         for summary, metadata, _ in self.submissions_logs:
             checkpoint_size_gb = summary.get("metric", {}).get("checkpoint_size_GB", 0)
             host_memory_gb = summary.get("host_memory_GB", [0])[0]
             num_hosts = summary.get("num_hosts", 1)
-            
+
             if checkpoint_size_gb == 0 or host_memory_gb == 0:
                 continue
-            
+
             # Data written per node
             data_per_node = checkpoint_size_gb / num_hosts
             min_required = 3 * host_memory_gb
-            
+
             if data_per_node < min_required:
-                self.log.warning(
+                self.warn_violation(
+                    "4.3.1", "checkpointDataSizeRatio", self.path,
                     "Checkpoint data per node %.2fGiB < 3x memory %.2fGiB. "
                     "Cache flush may be needed.",
                     data_per_node,
-                    min_required
+                    min_required,
                 )
-        
+
         return valid
     
+    @rule("4.3.2", "checkpointFsyncVerification")
     def fsync_verification(self):
         """
         Verify that fsync is enabled in checkpoint configuration.
+        (Rules.md 4.3.2)
         """
         valid = True
         if self.mode != "checkpointing":
             return valid
-        
+
         for summary, metadata, _ in self.submissions_logs:
             combined_params = metadata.get("combined_params", {})
             checkpoint_params = combined_params.get("checkpoint", {})
             fsync_enabled = checkpoint_params.get("fsync", False)
-            
+
             if not fsync_enabled:
-                self.log.error("Checkpoint fsync is not enabled in configuration")
+                self.log_violation(
+                    "4.3.2", "checkpointFsyncVerification", self.path,
+                    "checkpoint fsync is not enabled in configuration",
+                )
                 valid = False
-        
+
         return valid
     
+    @rule("4.3.3", "checkpointModelConfigurationReq")
     def model_configuration_req(self):
         """
         Verify benchmark uses one of the four supported models.
+        (Rules.md 4.3.3)
         """
         valid = True
         if self.mode != "checkpointing":
             return valid
-        
+
         allowed_models = {"8b", "70b", "405b", "1t"}
-        
+
         for summary, metadata, _ in self.submissions_logs:
             model_name = metadata.get("args", {}).get("model", "").lower()
-            
+
             # Extract just the size part (8b, 70b, etc.)
             model_size = re.search(r"(8b|70b|405b|1t)", model_name)
-            
+
             if not model_size or model_size.group(1) not in allowed_models:
-                self.log.error(
-                    "Invalid model '%s'. Must be one of: %s",
+                self.log_violation(
+                    "4.3.3", "checkpointModelConfigurationReq", self.path,
+                    "invalid model '%s'. Must be one of: %s",
                     model_name,
-                    allowed_models
+                    allowed_models,
                 )
                 valid = False
-        
+
         return valid
     
     @rule("4.6.1", "checkpointClosedMpiProcesses")
@@ -213,9 +229,11 @@ class CheckpointingCheck(BaseCheck):
 
         return valid
     
+    @rule("4.6.2", "checkpointClosedAcceleratorsPerHost")
     def closed_accelerators_per_host(self):
         """
         For CLOSED submissions, verify accelerators per host > 4 and total matches requirement.
+        (Rules.md 4.6.2)
         """
         valid = True
         if self.mode != "checkpointing":
@@ -223,47 +241,51 @@ class CheckpointingCheck(BaseCheck):
 
         for summary, metadata, _ in self.submissions_logs:
             verification = metadata.get("verification", "open")
-            
+
             if verification == "closed":
                 num_accelerators = summary.get("num_accelerators", 0)
                 num_hosts = summary.get("num_hosts", 1)
-                
+
                 accelerators_per_host = num_accelerators / num_hosts if num_hosts > 0 else 0
-                
+
                 if accelerators_per_host <= 4:
-                    self.log.error(
+                    self.log_violation(
+                        "4.6.2", "checkpointClosedAcceleratorsPerHost", self.path,
                         "CLOSED submission: accelerators per host %.2f must be > 4",
-                        accelerators_per_host
+                        accelerators_per_host,
                     )
                     valid = False
-        
+
         return valid
     
+    @rule("4.3.4", "checkpointAggregateAcceleratorMemory")
     def aggregate_accelerator_memory(self):
         """
         Verify total accelerator memory >= checkpoint size.
         H100 has 80GB per accelerator.
+        (Rules.md 4.3.4)
         """
         valid = True
         if self.mode != "checkpointing":
             return valid
-        
+
         ACCELERATOR_MEMORY_GB = 80  # H100
-        
+
         for summary, metadata, _ in self.submissions_logs:
             checkpoint_size_gb = summary.get("metric", {}).get("checkpoint_size_GB", 0)
             num_accelerators = summary.get("num_accelerators", 0)
-            
+
             total_accelerator_memory = num_accelerators * ACCELERATOR_MEMORY_GB
-            
+
             if total_accelerator_memory < checkpoint_size_gb:
-                self.log.error(
-                    "Aggregate accelerator memory %.2fGiB < checkpoint size %.2fGiB",
+                self.log_violation(
+                    "4.3.4", "checkpointAggregateAcceleratorMemory", self.path,
+                    "aggregate accelerator memory %.2fGiB < checkpoint size %.2fGiB",
                     total_accelerator_memory,
-                    checkpoint_size_gb
+                    checkpoint_size_gb,
                 )
                 valid = False
-        
+
         return valid
     
     def _get_nested_value(self, config_dict, key_path):
@@ -298,12 +320,19 @@ class CheckpointingCheck(BaseCheck):
                 p = prefix + "." if prefix != "" else prefix
                 yield (p + key, value)
     
+    @rule("4.6.3", "checkpointClosedCheckpointParameters")
     def closed_checkpoint_parameters(self):
         """
         For CLOSED submissions, verify yaml parameters match reference file.
         Only checkpoint_folder is allowed to differ.
+        (Rules.md 4.6.3)
+
+        Per Plan 03-02 Task 2 step 3: both early-return error branches
+        (reference-config-not-found and reference-config-load-failure) are
+        routed through ``log_violation`` under rule 4.6.3 with the more-specific
+        ``config_ref_full_path`` as the path argument.
         """
-        
+
         config_ref_path = os.path.join(os.path.dirname(__file__),
             os.pardir,
             os.pardir,
@@ -319,23 +348,23 @@ class CheckpointingCheck(BaseCheck):
         # Load reference YAML file
         config_ref_full_path = os.path.join(config_ref_path, config_ref_file)
         if not os.path.exists(config_ref_full_path):
-            self.log.error(
-                "Reference config file not found: %s",
-                config_ref_full_path
+            self.log_violation(
+                "4.6.3", "checkpointClosedCheckpointParameters", config_ref_full_path,
+                "reference config file not found",
             )
             return False
-        
+
         try:
             with open(config_ref_full_path, 'r') as f:
                 reference_config = yaml.safe_load(f)
         except Exception as e:
-            self.log.error(
-                "Failed to load reference config file %s: %s",
-                config_ref_full_path,
-                str(e)
+            self.log_violation(
+                "4.6.3", "checkpointClosedCheckpointParameters", config_ref_full_path,
+                "failed to load reference config file: %s",
+                str(e),
             )
             return False
-        
+
         allowed_diff_params = {
             "checkpoint.checkpoint_folder"
         }
@@ -343,66 +372,82 @@ class CheckpointingCheck(BaseCheck):
             verification = metadata.get("verification", "open")
             if verification == "closed":
                 yaml_params = metadata.get("yaml_params", {})
-                
+
                 # Compare yaml parameters with reference config
                 for key, value in self._get_nested_items(yaml_params):
                     # Skip allowed differing parameters
                     if key in allowed_diff_params:
                         continue
-                    
+
                     # Navigate reference config to find the parameter
                     ref_value = self._get_nested_value(reference_config, key)
-                    
+
                     if ref_value is None:
-                        self.log.error(
-                            "Parameter %s not found in reference config",
-                            key
+                        self.log_violation(
+                            "4.6.3", "checkpointClosedCheckpointParameters", self.path,
+                            "parameter %s not found in reference config",
+                            key,
                         )
                         valid = False
                     elif value != ref_value:
-                        self.log.error(
+                        self.log_violation(
+                            "4.6.3", "checkpointClosedCheckpointParameters", self.path,
                             "CLOSED submission parameter %s differs from reference. "
                             "Expected: %s, Got: %s",
                             key,
                             ref_value,
-                            value
+                            value,
                         )
                         valid = False
         return valid
     
+    @rule("4.4.1", "checkpointPathArgs")
     def checkpoint_path_args(self):
         """
         Verify checkpoint folder and output paths are set and different.
+        (Rules.md 4.4.1)
+
+        Per CONTEXT.md `<deferred>`: do NOT add benchmark_API gating in this plan;
+        that is a separate behavior change tracked for a future phase.
         """
         valid = True
         if self.mode != "checkpointing":
             return valid
-        
+
         for summary, metadata, _ in self.submissions_logs:
             args = metadata.get("args", {})
             checkpoint_folder = args.get("checkpoint_folder")
             results_dir = args.get("results_dir")
-            
+
             if not checkpoint_folder:
-                self.log.error("checkpoint_folder not set in arguments")
-                valid = False
-            
-            if not results_dir:
-                self.log.error("results_dir not set in arguments")
-                valid = False
-            
-            if checkpoint_folder and results_dir and checkpoint_folder == results_dir:
-                self.log.error(
-                    "checkpoint_folder and results_dir must be different: both are %s",
-                    checkpoint_folder
+                self.log_violation(
+                    "4.4.1", "checkpointPathArgs", self.path,
+                    "checkpoint_folder not set in arguments",
                 )
                 valid = False
-        
+
+            if not results_dir:
+                self.log_violation(
+                    "4.4.1", "checkpointPathArgs", self.path,
+                    "results_dir not set in arguments",
+                )
+                valid = False
+
+            if checkpoint_folder and results_dir and checkpoint_folder == results_dir:
+                self.log_violation(
+                    "4.4.1", "checkpointPathArgs", self.path,
+                    "checkpoint_folder and results_dir must be different: both are %s",
+                    checkpoint_folder,
+                )
+                valid = False
+
         return valid
     
+    @rule("4.3.5", "checkpointSubsetRunValidation")
     def subset_run_validation(self):
         """
         For subset runs, verify exactly 8 accelerators and not 8B model.
+        (Rules.md 4.3.5)
         """
         valid = True
         if self.mode != "checkpointing":
@@ -417,16 +462,18 @@ class CheckpointingCheck(BaseCheck):
                 model_name = metadata.get("args", {}).get("model", "").lower()
 
                 if num_accelerators != 8:
-                    self.log.error(
-                        "Subset run requires exactly 8 accelerators, got %d",
-                        num_accelerators
+                    self.log_violation(
+                        "4.3.5", "checkpointSubsetRunValidation", self.path,
+                        "subset run requires exactly 8 accelerators, got %d",
+                        num_accelerators,
                     )
                     valid = False
 
                 if "8b" in model_name:
-                    self.log.error(
-                        "Subset run cannot use 8B model: %s",
-                        model_name
+                    self.log_violation(
+                        "4.3.5", "checkpointSubsetRunValidation", self.path,
+                        "subset run cannot use 8B model: %s",
+                        model_name,
                     )
                     valid = False
 

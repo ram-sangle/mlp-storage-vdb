@@ -99,7 +99,23 @@ def main():
     results = {}
     systems = {}
     errors = []
-    checkers = [DirectoryCheck, TrainingCheck, CheckpointingCheck, VdbCheck, KVCacheCheck]
+
+    # Per CR-02 (review 2026-06-10): the checker list is mode-routed so that
+    # each per-mode Check class only runs against submissions whose loader
+    # mode matches. The previous flat list ran every checker against every
+    # submission. That was benign while VdbCheck/KVCacheCheck were no-op
+    # stubs, but locked in a regression for the next contributor — the first
+    # real @rule-decorated method added to VdbCheck would fire against
+    # training/checkpointing submissions and emit a §5 rule_id bound to the
+    # wrong submission. Gating at the loop keeps the stubs (and any future
+    # real checks) on the right submissions without each rule method needing
+    # to guard with `if self.mode != ...`.
+    MODE_TO_CHECKERS = {
+        "training":      [DirectoryCheck, TrainingCheck],
+        "checkpointing": [DirectoryCheck, CheckpointingCheck],
+        "vectordb":      [VdbCheck],
+        "kvcache":       [KVCacheCheck],
+    }
 
     # Per PLAN.md 01-03 D-02: run structural hierarchy checks ONCE before the
     # per-benchmark loader loop. Failures are accumulated into `errors` but do
@@ -118,10 +134,14 @@ def main():
 
     # Main loop over all the submissions
     for logs in loader.load():
-        # TODO: Initialize checkers
-        checkers_pipe = []
+        mode = getattr(logs.loader_metadata, "mode", None)
+        checkers = MODE_TO_CHECKERS.get(mode, [])
+        if not checkers:
+            log.warning(
+                "No checkers registered for mode=%r at %s; skipping",
+                mode, logs.loader_metadata.folder,
+            )
         valid = True
-        #TODO: Run checks
         for checker in checkers:
             valid &= checker(log, config, logs)()
 

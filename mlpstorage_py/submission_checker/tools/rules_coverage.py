@@ -151,9 +151,22 @@ def _collect_check_method_coverage() -> dict:
     except ImportError as exc:
         log.warning("Could not import KVCacheCheck: %s", exc)
 
+    # Per WR-01 (review 2026-06-10): the D-A4 design says each rule_id is
+    # owned by exactly one check method, but nothing enforced the invariant.
+    # Surface duplicate bindings (almost certainly a copy-paste regression)
+    # with a non-fatal warning. Last-writer still wins so the coverage
+    # report renders, but the duplicate is no longer silent.
     for cls in check_classes:
         for rule_id, (_rule_name, method_name) in discover_rules(cls).items():
-            coverage[rule_id] = "{}.{}".format(cls.__name__, method_name)
+            source = "{}.{}".format(cls.__name__, method_name)
+            if rule_id in coverage:
+                log.warning(
+                    "rule_id %s is decorated on both %s and %s — the second "
+                    "binding wins in the coverage report but this is almost "
+                    "certainly a copy-paste regression.",
+                    rule_id, coverage[rule_id], source,
+                )
+            coverage[rule_id] = source
     return coverage
 
 

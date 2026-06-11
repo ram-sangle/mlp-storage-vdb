@@ -43,6 +43,44 @@ MLPerf™ Storage Benchmark submission rules are described in the
 [Rules.md](https://github.com/mlcommons/storage/blob/main/Rules.md) file.
 If you have questions, please contact the [Storage WG chairs](https://mlcommons.org/en/groups/research-storage/).
 
+### Validating a submission package
+
+Submitters and MLPerf reviewers can run the bundled submission checker to verify a
+submission package against `Rules.md` before submission:
+
+```bash
+mlpstorage validate <submission-dir>
+```
+
+`<submission-dir>` is the top-level submission directory (the parent of
+`closed/` or `open/`). The validator reports every rule violation it finds —
+each diagnostic carries the `Rules.md` rule ID so the offending requirement can
+be looked up directly — and continues checking the rest of the hierarchy rather
+than aborting on the first failure. Exit code `0` means clean; `1` means
+violations were reported.
+
+Useful options:
+
+- `--submitters Acme,BetaCo` — restrict the check to a comma-separated allowlist
+  of submitter directory names (default: every submitter under the input path).
+- `--mlperf-version v5.1` — pin the spec version (default: `v5.1`).
+- `--csv PATH` — write the summary CSV to `PATH` (default: `summary.csv` in
+  the current directory).
+- `--skip-output-file` — suppress per-submission output files.
+- `--reference-checksum MD5` — override the bundled `REFERENCE_CHECKSUMS`
+  for the `code/` tree MD5 check.
+
+A second self-validation command audits the validator itself, reconciling
+every Rules.md §2/§3/§4 ID against the live `@rule`-decorated check methods to
+catch silent drift between the spec and the implementation:
+
+```bash
+mlpstorage rules-coverage
+```
+
+Use `--rules-md PATH` to point at an alternate `Rules.md` location. Exit code
+`0` means every live ID has a check binding; `1` means at least one ID is
+unmapped.
 
 ## Normalizing Factors For Comparisons
 

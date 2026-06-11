@@ -36,6 +36,15 @@ class DirectoryCheck(BaseCheck):
         self.init_checks()
 
     def init_checks(self):
+        """Register §2 directory checks for the current submission's mode.
+
+        Per CR-01 (review 2026-06-10): the previous binary if/else routed any
+        non-training mode into the checkpointing branch, which would emit
+        false 2.1.22..2.1.26 violations against vdb/kvcache submission trees.
+        DirectoryCheck owns §2 rules for training and checkpointing only;
+        vdb/kvcache directory rules (if added) belong to their own Check
+        classes. Unknown modes register no checks and log at debug level.
+        """
         self.checks = []
         mode = getattr(self.submissions_logs.loader_metadata, 'mode', 'training')
         if mode == "training":
@@ -49,7 +58,7 @@ class DirectoryCheck(BaseCheck):
                 self.run_dlio_config_check,
                 self.run_duration_valid_check,
             ])
-        else:
+        elif mode == "checkpointing":
             # Checkpointing mode checks
             self.checks.extend([
                 self.checkpointing_results_json_check,
@@ -58,6 +67,13 @@ class DirectoryCheck(BaseCheck):
                 self.checkpointing_files_check,
                 self.checkpointing_dlio_config_check,
             ])
+        else:
+            # vdb / kvcache / unknown — DirectoryCheck has no §2 rules for
+            # these modes yet; emit nothing and let the per-mode Check class
+            # own its directory rules when they land.
+            self.log.debug(
+                "DirectoryCheck: no §2 checks registered for mode=%r", mode
+            )
     
     
     @rule("2.1.14", "datagenFiles")

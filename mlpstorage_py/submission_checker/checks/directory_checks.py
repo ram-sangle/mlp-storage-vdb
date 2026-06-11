@@ -546,3 +546,29 @@ class DirectoryCheck(BaseCheck):
                 valid = False
 
         return valid
+
+    @rule("2.1.27", "directoryDiagram")
+    def directory_diagram_check(self):
+        """No-op binding for Rules.md 2.1.27 (directoryDiagram).
+
+        Rules.md 2.1.27 is a pictorial illustration of the submission directory
+        layout (see Rules.md line 117: "Pictorially, here is what this looks
+        like:"). There is no programmatic check that maps to the diagram
+        itself — the rules the diagram depicts are enforced by the structural
+        and file-content checks elsewhere:
+
+        - 2.1.1..2.1.13 (top-level / submitter / code / systems / results
+          hierarchy) are covered by SubmissionStructureCheck (Phase 1).
+        - 2.1.14..2.1.26 (per-workload datagen/run/checkpointing layout)
+          are covered by the other 12 methods on this class.
+
+        This method exists only so discover_rules(DirectoryCheck) can report
+        2.1.27 as bound (Phase 3 D-A1 aggressive-retrofit choice — prefer an
+        @rule binding over an OUT_OF_SCOPE_RULES entry). It is NOT registered
+        in init_checks and does NOT contribute to the per-submission pass/fail
+        accumulator.
+
+        Returns:
+            True — emits no logging and never participates in run_checks().
+        """
+        return True

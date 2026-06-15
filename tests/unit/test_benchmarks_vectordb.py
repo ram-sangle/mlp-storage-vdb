@@ -46,7 +46,6 @@ class TestVectorDBCommandMap:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(basic_args)
@@ -62,7 +61,6 @@ class TestVectorDBCommandMap:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(basic_args)
@@ -77,7 +75,6 @@ class TestVectorDBCommandMap:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(basic_args)
@@ -144,7 +141,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(run_args)
@@ -165,7 +161,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(run_args)
@@ -186,7 +181,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(run_args)
@@ -203,7 +197,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(run_args)
@@ -224,7 +217,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(datagen_args)
@@ -252,7 +244,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(run_args)
@@ -269,7 +260,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(run_args)
@@ -290,7 +280,6 @@ class TestVectorDBMetadata:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(datagen_args)
@@ -339,7 +328,6 @@ class TestVectorDBBenchmarkType:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark.verify_benchmark'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             from mlpstorage_py.config import BENCHMARK_TYPES
@@ -354,7 +342,6 @@ class TestVectorDBBenchmarkType:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(basic_args)
@@ -398,7 +385,6 @@ class TestVectorDBConfigHandling:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(basic_args)
@@ -415,7 +401,6 @@ class TestVectorDBConfigHandling:
              patch('mlpstorage_py.benchmarks.vectordbbench.VectorDBBenchmark._validate_vdb_dependencies'):
             output_dir = str(tmp_path / "output")
             mock_gen.return_value = output_dir
-            os.makedirs(output_dir, exist_ok=True)
 
             from mlpstorage_py.benchmarks.vectordbbench import VectorDBBenchmark
             bm = VectorDBBenchmark(basic_args)

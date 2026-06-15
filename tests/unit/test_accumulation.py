@@ -21,6 +21,11 @@ from typing import Optional
 
 import pytest
 
+from mlpstorage_py.run_directory import (
+    DEFAULT_COLLISION_BUMP_BUDGET,
+    bump_datetime_one_second,
+    reserve_run_directory,
+)
 from mlpstorage_py.config import BENCHMARK_TYPES, PARAM_VALIDATION
 from mlpstorage_py.rules import BenchmarkRun, get_runs_files
 from mlpstorage_py.rules.submission_checkers.training import (
@@ -347,16 +352,13 @@ class TestWorkloadSeparation:
         assert issue.validation == PARAM_VALIDATION.INVALID
         assert issue.parameter == "model"
 
-    def test_multi_run_checker_accepts_mixed_benchmark_types(
+    def test_multi_run_checker_rejects_mixed_benchmark_types(
         self, tmp_path, mock_logger
     ):
-        """Documents a defensive-coding gap: MultiRunRulesChecker does NOT
-        verify that all runs share a benchmark_type — that enforcement lives
-        only in BenchmarkVerifier._create_rules_checker (verifier.py:106-108).
-        A caller bypassing the verifier can hand it a heterogeneous list
-        without an error. If model also happens to match across types,
-        check_run_consistency will return None too. PR 2 candidate fix.
-        """
+        """MultiRunRulesChecker.check_benchmark_type_consistency flags INVALID
+        when runs span more than one benchmark_type, even if model names
+        coincide. This defends against silent grouping bugs when a caller
+        bypasses BenchmarkVerifier's dispatch-time type guard."""
         results_dir = tmp_path / "results"
         # Same model name across types — manufactured to bypass the model check
         make_training_run(results_dir, model="shared-model", run_datetime="20250111_140000")
@@ -370,10 +372,13 @@ class TestWorkloadSeparation:
         }
 
         checker = MultiRunRulesChecker(runs, logger=mock_logger)
-        assert checker.check_run_consistency() is None, (
-            "Current behavior: model-only consistency check misses type drift. "
-            "PR 2 should also enforce benchmark_type consistency here."
-        )
+        # Model check still passes (names coincide)
+        assert checker.check_run_consistency() is None
+        # But type check fires
+        type_issue = checker.check_benchmark_type_consistency()
+        assert type_issue is not None
+        assert type_issue.validation == PARAM_VALIDATION.INVALID
+        assert type_issue.parameter == "benchmark_type"
 
 
 # ---------------------------------------------------------------------------
@@ -463,17 +468,11 @@ class TestDiscoveryNegativeCases:
         assert runs == []
         mock_logger.warning.assert_called()
 
-    def test_summary_only_no_metadata_produces_typeless_run(
-        self, tmp_path, mock_logger
-    ):
-        """summary.json without metadata triggers the DLIOResultParser fallback.
-
-        Today, a summary.json with no Hydra configs and no workflow signal
-        produces a BenchmarkRun with benchmark_type=None — the parser does not
-        raise, and discovery accepts the run. Downstream the BenchmarkVerifier
-        will reject it ('Unsupported benchmark type'), but the run still appears
-        in get_runs_files output. PR 2 should reject these earlier rather than
-        leaking typeless runs into accumulation.
+    def test_summary_only_no_metadata_is_rejected(self, tmp_path, mock_logger):
+        """A summary.json with no workflow signal and no Hydra configs cannot
+        be classified as a benchmark type. DLIOResultParser raises and
+        get_runs_files swallows the exception with a warning — the bogus run
+        does NOT leak into accumulation.
         """
         results_dir = tmp_path / "results"
         run_dir = results_dir / "training" / "unet3d" / "run" / "20250111_140000"
@@ -482,23 +481,19 @@ class TestDiscoveryNegativeCases:
 
         runs = get_runs_files(str(results_dir), logger=mock_logger)
 
-        assert len(runs) == 1, (
-            "Current behavior: typeless run leaks through. PR 2 should reject."
-        )
-        assert runs[0].benchmark_type is None
+        assert runs == []
+        mock_logger.warning.assert_called()
 
     def test_nonexistent_results_dir_returns_empty(self, tmp_path, mock_logger):
         runs = get_runs_files(str(tmp_path / "does-not-exist"), logger=mock_logger)
         assert runs == []
         mock_logger.warning.assert_called()
 
-    def test_symlinked_run_directory_is_not_followed(self, tmp_path, mock_logger):
-        """os.walk in get_runs_files (utils.py:210) uses the default
-        followlinks=False. A user who symlinks a previously-completed run into
-        the results tree to 'accumulate' it will see it silently skipped.
-        Documents current behavior — PR 2 may want to either follow symlinks
-        or warn explicitly that symlinks are unsupported.
-        """
+    def test_symlinked_run_directory_is_followed(self, tmp_path, mock_logger):
+        """A user can symlink a previously-completed run directory into a
+        results-dir to accumulate it. get_runs_files follows symlinks so the
+        run is discovered. Stitching together results from multiple machines
+        or earlier batches is a real workflow."""
         results_dir = tmp_path / "results"
         # Real run lives outside the results tree
         external = tmp_path / "external"
@@ -512,7 +507,86 @@ class TestDiscoveryNegativeCases:
 
         runs = get_runs_files(str(results_dir), logger=mock_logger)
 
-        assert runs == [], (
-            "Current behavior: symlinked runs are silently skipped. "
-            "PR 2 should decide: follow or warn."
+        assert len(runs) == 1
+        assert runs[0].benchmark_type == BENCHMARK_TYPES.training
+        assert runs[0].model == "unet3d"
+
+
+# ---------------------------------------------------------------------------
+# Sub-second collision handling for run directory creation
+# (mlpstorage_py/benchmarks/run_directory.py)
+# ---------------------------------------------------------------------------
+
+
+def _flat_path_for(base: Path):
+    return lambda dt: str(base / dt)
+
+
+class TestBumpDatetimeOneSecond:
+    def test_bumps_one_second_forward(self):
+        assert bump_datetime_one_second("20250111_140000") == "20250111_140001"
+
+    def test_rolls_over_minute(self):
+        assert bump_datetime_one_second("20250111_140059") == "20250111_140100"
+
+    def test_rolls_over_day(self):
+        assert bump_datetime_one_second("20250111_235959") == "20250112_000000"
+
+
+class TestReserveRunDirectory:
+    def test_creates_dir_when_no_collision(self, tmp_path):
+        reserved, final_dt = reserve_run_directory(
+            "20250111_140000", _flat_path_for(tmp_path)
         )
+        assert reserved == str(tmp_path / "20250111_140000")
+        assert Path(reserved).is_dir()
+        assert final_dt == "20250111_140000"
+
+    def test_bumps_past_existing_directory(self, tmp_path):
+        (tmp_path / "20250111_140000").mkdir()
+        (tmp_path / "20250111_140001").mkdir()
+
+        reserved, final_dt = reserve_run_directory(
+            "20250111_140000", _flat_path_for(tmp_path)
+        )
+
+        assert reserved == str(tmp_path / "20250111_140002")
+        assert final_dt == "20250111_140002", (
+            "Caller must observe the bumped datetime so metadata filenames match."
+        )
+
+    def test_raises_when_budget_exhausted(self, tmp_path):
+        start = "20250111_140000"
+        cur = start
+        for _ in range(DEFAULT_COLLISION_BUMP_BUDGET):
+            (tmp_path / cur).mkdir()
+            cur = bump_datetime_one_second(cur)
+
+        with pytest.raises(RuntimeError, match="Could not reserve a unique"):
+            reserve_run_directory(start, _flat_path_for(tmp_path))
+
+    def test_creates_parent_dirs(self, tmp_path):
+        nested = tmp_path / "results" / "training" / "unet3d" / "run"
+        # Don't pre-create the parent — reserve_run_directory should
+        reserved, _ = reserve_run_directory(
+            "20250111_140000", _flat_path_for(nested)
+        )
+        assert Path(reserved).is_dir()
+        assert Path(reserved).parent == nested
+
+    def test_small_budget(self, tmp_path):
+        """Custom budget overrides DEFAULT_COLLISION_BUMP_BUDGET."""
+        (tmp_path / "20250111_140000").mkdir()
+        (tmp_path / "20250111_140001").mkdir()
+
+        # budget=2 means it tries 14:00:00 (taken) and 14:00:01 (taken) then gives up
+        with pytest.raises(RuntimeError):
+            reserve_run_directory(
+                "20250111_140000", _flat_path_for(tmp_path), budget=2
+            )
+
+        # budget=3 succeeds at 14:00:02
+        reserved, final_dt = reserve_run_directory(
+            "20250111_140000", _flat_path_for(tmp_path), budget=3
+        )
+        assert final_dt == "20250111_140002"

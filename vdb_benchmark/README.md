@@ -6,10 +6,16 @@ supports Milvus with DiskANN, HNSW, AISAQ, FLAT, and IVF-style indexes.
 > **Preview Status:** The VectorDB benchmark is in preview. All runs qualify for
 > OPEN category only. Pass `--open` to acknowledge this.
 
-> **Modular Runner (Preview):** A backend-agnostic runner is available as a
-> standalone preview via `python -m vdbbench.benchmark`. The `./mlpstorage vectordb`
-> command continues to use the Milvus-oriented scripts until the modular runner is
-> integrated.
+The benchmark can be run in two ways:
+
+1. Directly with the scripts in `vdb_benchmark/vdbbench/`
+2. Through the MLPerf Storage CLI with `./mlpstorage vectordb`
+
+The `mlpstorage` path is recommended for standard benchmark workflows.
+
+> The modular backend-agnostic runner is currently a standalone preview.
+> It is invoked with `python -m vdbbench.benchmark`.
+> The existing `./mlpstorage vectordb` command continues to use the Milvus-oriented scripts until the modular runner is integrated.
 
 ---
 
@@ -61,21 +67,22 @@ supports Milvus with DiskANN, HNSW, AISAQ, FLAT, and IVF-style indexes.
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| Python | 3.12+ | Required |
-| Docker & Docker Compose | Latest | For running Milvus |
+| Python | ≥ 3.12 | Required |
+| Docker Engine | ≥ 20.10 | For running Milvus containers |
+| Docker Compose | v2+ | `docker compose` (v2 CLI plugin) preferred |
 | Git | Any | To clone the repository |
-| `uv` | Latest | Recommended package manager |
-| MPI (MPICH or OpenMPI) | Any | Only for distributed/multi-node runs |
+| `uv` | Latest | Recommended package manager ([install](https://docs.astral.sh/uv/getting-started/installation/)) |
+| MPI (MPICH or OpenMPI) | Any | Only for distributed/multi-node runs; requires `mpi4py ≥ 4.0.0` |
 
 ### Python Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| `pymilvus` | Milvus client |
-| `numpy` | Vector generation and recall math |
-| `pyyaml` | YAML config support |
-| `tabulate` | Collection info table display |
-| `pandas` | Latency/statistics aggregation |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `pymilvus` | ≥ 2.4.0 | Milvus client |
+| `numpy` | ≥ 1.24.3 | Vector generation and recall math |
+| `pandas` | ≥ 2.0.3 | Latency/statistics aggregation |
+| `pyyaml` | ≥ 6.0 | YAML config support |
+| `tabulate` | ≥ 0.9.0 | Collection info table display |
 
 The `datasize` command does not require Milvus or `pymilvus`. Load and run
 commands require a running Milvus server.
@@ -95,10 +102,10 @@ A running Milvus instance is required for all load (`datagen`) and benchmark
 (`run`) commands. This section applies to both the mlpstorage CLI and direct
 script paths.
 
-Standalone Milvus stacks are available in the `stacks` directory:
+Standalone Milvus stacks are available in the `vdb_benchmark/stacks` directory:
 
 ```text
-stacks/
+vdb_benchmark/stacks/
 └── milvus/
     ├── cluster/
     └── standalone/
@@ -116,8 +123,8 @@ the values as needed.
 ### Option A: Local Storage with MinIO
 
 ```bash
-cp stacks/milvus/standalone/minio/.env.example \
-   stacks/milvus/standalone/minio/.env
+cp vdb_benchmark/stacks/milvus/standalone/minio/.env.example \
+   vdb_benchmark/stacks/milvus/standalone/minio/.env
 ```
 
 The compose file uses `/mnt/vdb` as the root directory for Docker volumes. Set
@@ -133,13 +140,13 @@ The stack creates three containers:
 Start:
 
 ```bash
-docker compose -f stacks/milvus/standalone/minio/docker-compose.yml up -d
+docker compose -f vdb_benchmark/stacks/milvus/standalone/minio/docker-compose.yml up -d
 ```
 
 or:
 
 ```bash
-docker-compose -f stacks/milvus/standalone/minio/docker-compose.yml up -d
+docker-compose -f vdb_benchmark/stacks/milvus/standalone/minio/docker-compose.yml up -d
 ```
 
 ### Option B: S3 Storage
@@ -147,20 +154,20 @@ docker-compose -f stacks/milvus/standalone/minio/docker-compose.yml up -d
 Copy and configure environment (fill in your S3 credentials):
 
 ```bash
-cp stacks/milvus/standalone/s3/.env.example \
-   stacks/milvus/standalone/s3/.env
+cp vdb_benchmark/stacks/milvus/standalone/s3/.env.example \
+   vdb_benchmark/stacks/milvus/standalone/s3/.env
 ```
 
 Start:
 
 ```bash
-docker compose -f stacks/milvus/standalone/s3/docker-compose-s3.yml up -d
+docker compose -f vdb_benchmark/stacks/milvus/standalone/s3/docker-compose-s3.yml up -d
 ```
 
 or:
 
 ```bash
-docker-compose -f stacks/milvus/standalone/s3/docker-compose-s3.yml up -d
+docker-compose -f vdb_benchmark/stacks/milvus/standalone/s3/docker-compose-s3.yml up -d
 ```
 
 ### Verify Milvus is Healthy
@@ -178,17 +185,12 @@ The default Milvus endpoint is:
 127.0.0.1:19530
 ```
 
-> **Note:** All `stacks/` paths above are relative to the `vdb_benchmark/`
-> directory. If running from the repository root (`storage/`), prefix with
-> `vdb_benchmark/` (e.g., `vdb_benchmark/stacks/milvus/standalone/minio/...`).
-
 ---
 
-## 3. Quick Start — First Benchmark in 10 Minutes
+## 3. Quick Start 
 
-This section gets you from zero to a working benchmark result on a single machine.
-Every command is copy-paste ready. Assumes you have already deployed Milvus
-([Section 2](#2-deploy-milvus)).
+This section gets you from zero to a working benchmark result on a standalone-system.
+Assumes Milvus is set up as per section #2 instructions. 
 
 ### Step 1 — Install
 
@@ -538,6 +540,10 @@ in [Section 2](#2-deploy-milvus).
 
 ### 5.2 Load Vectors
 
+> **Working directory:** All `python vdbbench/...` commands in this section
+> assume you are in `storage/vdb_benchmark/`. Console scripts (`uv run load-vdb`,
+> etc.) work from any directory.
+
 #### Load using a YAML config
 
 ```bash
@@ -574,10 +580,10 @@ python vdbbench/load_vdb.py \
 
 #### Config file location
 
-Direct script configs live in:
+Direct script configs live in `vdbbench/configs/` (relative to `storage/vdb_benchmark/`):
 
 ```text
-vdb_benchmark/vdbbench/configs/
+vdbbench/configs/
 ├── 10m_diskann.yaml       (10M vectors, 10 shards, 1536 dim)
 ├── 10m_hnsw.yaml
 ├── 1m_diskann.yaml        (1M vectors, 1 shard, 1536 dim)
@@ -1473,6 +1479,9 @@ mpiexec -n 2 -hosts node01,node02 hostname
 ---
 
 ## 9. Enhanced Benchmark Full Reference
+
+> **Working directory:** All commands below assume you are in
+> `storage/vdb_benchmark/`.
 
 `enhanced_bench.py` merges the operational features of `simple_bench.py` with
 advanced features for parameter sweeps, warm/cold cache regimes, budget mode,

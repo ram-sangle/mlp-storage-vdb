@@ -92,6 +92,9 @@ addopts = "-v --tb=short --setup-show"
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+markers = [
+    "integration: subprocess + end-to-end tests (Phase 3 DoD per CONTEXT.md D-E1)",
+]
 
 [tool.coverage.run]
 source = ["mlpstorage_py"]

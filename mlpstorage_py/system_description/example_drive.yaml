@@ -18,9 +18,43 @@ system_under_test:
         - friendly_description: Data
           quantity: 1
           chassis: 
-             model_name: Supermicro 2U Hyper A+ Server (AS -2125HS-TNR)
-             rack_units: 2
-             cpu_model: AMD EPYC 9354 32-Core Processor
+             model_name: Dell7680
+             rack_units: 1
+             cpu_model: XEON 90000
+             cpu_qty: 2
+             cpu_cores: 96
+             memory_capacity: 256
+             power:
+                min_psus_active: 1
+                psus_configured:
+                    - power_capacity_watts: 1800
+                      efficiency: Platinum
+                      unit_count: 2
+          drives:
+              - vendor_name: Micron
+                model_name: X9000 TLC
+                interface: nvme
+                media_type: TLC
+                capacity_in_GB: 8000
+                unit_count: 1
+                performance:
+                    seq_read_MBps: 14000
+                    seq_write_MBps: 10000
+                    random_read_IOPS: 2700000
+                    random_write_IOPS: 400000
+                    form_factor: U.2
+                    interface_speed: PCIe Gen5 x4
+          operating_system:
+             name: Rocky Linux
+             version: "9.5"
+    total_rack_units: 1
+    clients:
+        - friendly_description: Benchmark load system
+          quantity: 16
+          chassis: 
+             model_name: Dell7680
+             rack_units: 1
+             cpu_model: XEON 90000
              cpu_qty: 2
              cpu_cores: 32
              memory_capacity: 256
